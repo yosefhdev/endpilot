@@ -15,16 +15,16 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo test -p endpilot-server health_returns_ok   # un solo test: -p <crate> <filtro>
 
-# Frontend (en apps/desktop)
-npm run tauri dev        # app de escritorio con recarga
-npm run lint && npm run format:check && npm run build
+# Frontend (en apps/desktop). Solo bun: nunca npm/pnpm/yarn; el lockfile es bun.lock
+bun run tauri dev        # app de escritorio con recarga
+bun run lint && bun run format:check && bun run build
 
 # Backend dev (desde la raíz): API :8080, Caddy :80, Postgres host :5433, Redis :6379
 docker compose -f deploy/docker-compose.dev.yml up -d --build --wait
 docker compose -f deploy/docker-compose.dev.yml watch   # reconstruye api al cambiar server/ o crates/
 ```
 
-- Cualquier `cargo` que compile `endpilot-desktop` falla si no existe `apps/desktop/dist` (`tauri::generate_context!` lo exige): corre `npm run build` antes. CI hace lo mismo.
+- Cualquier `cargo` que compile `endpilot-desktop` falla si no existe `apps/desktop/dist` (`tauri::generate_context!` lo exige): corre `bun run build` antes. CI hace lo mismo.
 - El Dockerfile del server usa la raíz como contexto y compila solo `-p endpilot-server`; `Cargo.lock` debe estar al día (`--locked`).
 - Postgres se expone en el host en 5433 porque en esta máquina hay un Postgres local en 5432.
 - Lints de workspace: `unsafe_code = forbid`, clippy `all` en warn (CI con `-D warnings`). Cada crate nuevo necesita `[lints] workspace = true` y heredar `version/edition/license` del workspace.
