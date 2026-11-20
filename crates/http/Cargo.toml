@@ -1,0 +1,21 @@
+[package]
+name = "endpilot-http"
+description = "Motor HTTP (reqwest) que ejecuta los requests del usuario"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+endpilot-core.workspace = true
+reqwest = { version = "0.13", features = ["cookies", "multipart", "form", "gzip", "brotli", "deflate", "zstd"] }
+tokio = { workspace = true, features = ["fs", "time"] }
+base64 = "0.22"
+# Same major as reqwest uses, only to recognise TLS errors by type.
+rustls = { version = "0.23", default-features = false }
+
+[dev-dependencies]
+axum = "0.8"
+tokio.workspace = true
+
+[lints]
+workspace = true

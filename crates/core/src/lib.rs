@@ -1,5 +1,7 @@
 //! Tipos compartidos entre la app de escritorio y el servidor.
 
+pub mod http;
+
 use serde::{Deserialize, Serialize};
 
 /// Versión del producto, común a cliente y servidor.

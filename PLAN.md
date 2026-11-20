@@ -1,7 +1,7 @@
 # Plan del proyecto: Cliente de APIs de escritorio, autohospedado y colaborativo
 
 > Nombre de trabajo: **`<NOMBRE-DEL-PROYECTO>`** (reemplazar; verificar que no choque con marcas existentes).
-> Estado: Fase 0 completada. Última actualización: 2026-11-20.
+> Estado: Fase 1 completada. Última actualización: 2026-11-20.
 
 ## 1. Visión
 
@@ -184,11 +184,11 @@ docker compose -f deploy/docker-compose.yml up -d
 - **Entregable:** `docker compose up` levanta el backend base y la app de escritorio abre una ventana.
 
 ### Fase 1: Núcleo de requests (2 semanas)
-- [ ] Comando Rust con `reqwest`: envía el request y devuelve status, headers, body, tiempos y tamaño.
-- [ ] UI: método, URL, pestañas de Params, Headers y Body (JSON, form-data, urlencoded, raw).
-- [ ] Visor de respuesta: Body formateado, Headers, Cookies y Timeline.
-- [ ] Cancelar peticiones; errores claros (DNS, timeout, TLS).
-- [ ] Varias pestañas abiertas a la vez.
+- [x] Comando Rust con `reqwest`: envía el request y devuelve status, headers, body, tiempos y tamaño.
+- [x] UI: método, URL, pestañas de Params, Headers y Body (JSON, form-data, urlencoded, raw).
+- [x] Visor de respuesta: Body formateado, Headers, Cookies y Timeline.
+- [x] Cancelar peticiones; errores claros (DNS, timeout, TLS).
+- [x] Varias pestañas abiertas a la vez.
 - **Entregable:** se envían requests reales y se ve la respuesta.
 
 ### Fase 2: Modelo local (2 semanas)

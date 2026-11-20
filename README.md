@@ -2,7 +2,7 @@
 
 Cliente de APIs de escritorio, autohospedado y colaborativo. Alternativa local-first a Postman, compatible con sus colecciones. Nombre provisional.
 
-Estado: **Fase 0** (estructura base). El plan completo está en [PLAN.md](PLAN.md).
+Estado: **Fase 1** (envío de requests; sin persistencia todavía). El plan completo está en [PLAN.md](PLAN.md).
 
 ## Requisitos
 
@@ -30,7 +30,7 @@ curl http://localhost/health
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cd apps/desktop && bun run lint && bun run format:check && bun run build
+cd apps/desktop && bun run lint && bun test && bun run format:check && bun run build
 ```
 
 `cargo` sobre el workspace compila la app Tauri, que necesita `apps/desktop/dist`: corre `bun run build` antes la primera vez.
@@ -40,6 +40,7 @@ cd apps/desktop && bun run lint && bun run format:check && bun run build
 ```
 apps/desktop/   Tauri 2 + React (src/ = UI, src-tauri/ = núcleo Rust)
 crates/core/    Tipos compartidos entre cliente y servidor
+crates/http/    Motor HTTP (reqwest) que ejecuta los requests
 server/         API Axum + Dockerfile
 deploy/         Compose, Caddyfile, .env.example
 ```

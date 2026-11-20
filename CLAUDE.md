@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Estado actual
 
-**Fase 0 completada** (esqueleto: ventana Tauri vacía + API con solo `GET /health`). Siguiente: **Fase 1** (núcleo de requests). `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
+**Fase 1 completada** (envío de requests con pestañas, editor y visor de respuesta; aún sin persistencia: todo vive en memoria). La API solo tiene `GET /health`. Siguiente: **Fase 2** (modelo local en SQLite). `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
 
 ## Comandos
 
@@ -13,11 +13,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-cargo test -p endpilot-server health_returns_ok   # un solo test: -p <crate> <filtro>
+cargo test -p endpilot-http errors_are_classified   # un solo test: -p <crate> <filtro>
 
 # Frontend (en apps/desktop). Solo bun: nunca npm/pnpm/yarn; el lockfile es bun.lock
 bun run tauri dev        # app de escritorio con recarga
-bun run lint && bun run format:check && bun run build
+bun run lint && bun test && bun run format:check && bun run build
+bun test src/lib/url.test.ts -t "round-trips"   # un solo test (bun:test, archivos *.test.ts)
 
 # Backend dev (desde la raíz): API :8080, Caddy :80, Postgres host :5433, Redis :6379
 docker compose -f deploy/docker-compose.dev.yml up -d --build --wait
@@ -39,7 +40,18 @@ Alternativa de escritorio a Postman, autohospedada, local-first, con sync en tie
 
 - **Cliente:** Tauri 2 (núcleo Rust) + React/TypeScript/Vite/Tailwind, Zustand, CodeMirror 6. Las peticiones HTTP se hacen en Rust con `reqwest` (no desde el WebView). Base local SQLite.
 - **Servidor:** Rust + Axum, PostgreSQL, Redis pub/sub (fan-out entre instancias), MinIO, Caddy (único servicio que expone 80/443).
-- **Monorepo:** existen `apps/desktop/`, `crates/core` (tipos compartidos, p. ej. `Health`, `VERSION`), `server/`, `deploy/` (compose dev, Caddyfile, `.env.example`). Se crean en su fase: `crates/{postman-compat,sync-protocol,script-sandbox}`, `server/migrations/`, `deploy/docker-compose.yml` (prod), `deploy/backup/`, `docs/adr/`. Los crates se comparten entre cliente y servidor.
+- **Monorepo:** existen `apps/desktop/`, `crates/core` (tipos compartidos), `crates/http` (motor reqwest), `server/`, `deploy/` (compose dev, Caddyfile, `.env.example`). Se crean en su fase: `crates/{postman-compat,sync-protocol,script-sandbox}`, `server/migrations/`, `deploy/docker-compose.yml` (prod), `deploy/backup/`, `docs/adr/`. Los crates se comparten entre cliente y servidor.
+
+### Flujo de un request (implementado)
+
+1. La UI (`apps/desktop/src`) guarda por pestaña un `RequestDraft` en el store de Zustand (`store.ts`). El draft conserva los datos de todos los modos de body; `toHttpRequest` lo convierte al formato del motor al enviar.
+2. `invoke("send_request", { id, request })` → comando en `src-tauri/src/lib.rs`, que lanza `endpilot_http::send` en una tarea tokio y guarda su `AbortHandle` por `id`. `cancel_request(id)` la aborta y devuelve un error `cancelled`.
+3. `crates/http` usa un cliente reqwest **por request** (para medir DNS con un resolver propio y registrar redirecciones) y devuelve `HttpResponse`, o un `HttpError` con `kind` clasificado (dns/tls/timeout/connection…). TLS se reconoce por tipo `rustls::Error`, que llega envuelto en varios `io::Error`.
+4. Los tipos viven en `crates/core/src/http.rs` y se reflejan a mano en `apps/desktop/src/types.ts` (serde camelCase). **Si cambias uno, cambia el otro.** Los modos de body usan los nombres de Postman (`raw`, `urlencoded`, `formdata`) para facilitar la Fase 3.
+5. Params y URL se sincronizan en ambas direcciones (`src/lib/url.ts`) sin codificar ni decodificar, para que `{{variables}}` sobrevivan.
+
+- Colores y fuentes de la UI son tokens de Tailwind v4 en `src/index.css` (`@theme`); los componentes no usan hex sueltos.
+- Los atajos (Ctrl+Enter, Ctrl+T, Ctrl+W) se registran en fase de captura en `App.tsx` para ganarle al keymap de CodeMirror.
 
 ### Sincronización (la parte delicada)
 

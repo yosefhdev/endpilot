@@ -1,1 +1,56 @@
 @import "tailwindcss";
+
+/* Dark-first developer palette (slate + green "run" accent). Components use these tokens only. */
+@theme {
+  --color-bg: #0b1120;
+  --color-surface: #0f172a;
+  --color-raised: #1e293b;
+  --color-line: #1e293b;
+  --color-line-strong: #334155;
+  --color-fg: #f1f5f9;
+  --color-muted: #94a3b8;
+  --color-accent: #22c55e;
+  --color-accent-hover: #4ade80;
+  --color-on-accent: #052e16;
+  --color-danger: #f87171;
+  --color-warn: #fbbf24;
+  --color-info: #38bdf8;
+
+  --font-sans: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-fg font-sans text-sm antialiased;
+    color-scheme: dark;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-1 outline-info;
+  }
+  button:not(:disabled),
+  select:not(:disabled),
+  [role="tab"] {
+    cursor: pointer;
+  }
+}
+
+/* @uiw's dark theme paints its own background; blend editors into the panel instead. */
+.cm-editor,
+.cm-editor .cm-gutters {
+  background-color: transparent !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

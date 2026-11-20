@@ -41,6 +41,7 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run lint
+          bun test
           bun run format:check
           bun run build
 
