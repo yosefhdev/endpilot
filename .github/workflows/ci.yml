@@ -14,16 +14,23 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # 24.04 is the image Tauri documents; ubuntu-latest (26.04) hung for 10+ min in apt.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
 
+      # Compile-time deps only (no bundling): https://v2.tauri.app/start/prerequisites/#linux
       - name: Tauri system deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
+          # man-db rebuilds its index on every install and is very slow on runners
+          sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev librsvg2-dev libxdo-dev
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -49,8 +56,9 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - run: docker build -f server/Dockerfile .
