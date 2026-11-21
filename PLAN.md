@@ -1,7 +1,7 @@
 # Plan del proyecto: Cliente de APIs de escritorio, autohospedado y colaborativo
 
 > Nombre de trabajo: **`<NOMBRE-DEL-PROYECTO>`** (reemplazar; verificar que no choque con marcas existentes).
-> Estado: Fase 1 completada. Última actualización: 2026-11-20.
+> Estado: Fase 2 completada. Última actualización: 2026-11-20.
 
 ## 1. Visión
 
@@ -192,11 +192,11 @@ docker compose -f deploy/docker-compose.yml up -d
 - **Entregable:** se envían requests reales y se ve la respuesta.
 
 ### Fase 2: Modelo local (2 semanas)
-- [ ] Colecciones, carpetas y requests con crear, renombrar, mover, duplicar y borrar.
-- [ ] Almacenamiento en SQLite local.
-- [ ] Entornos y variables (`{{variable}}`), con autocompletado y resolución.
-- [ ] Historial de requests.
-- [ ] Autenticación: Bearer, Basic, API Key (OAuth 2.0 en la fase 7).
+- [x] Colecciones, carpetas y requests con crear, renombrar, mover, duplicar y borrar.
+- [x] Almacenamiento en SQLite local.
+- [x] Entornos y variables (`{{variable}}`), con autocompletado y resolución.
+- [x] Historial de requests.
+- [x] Autenticación: Bearer, Basic, API Key (OAuth 2.0 en la fase 7).
 - **Entregable:** herramienta usable de forma local.
 
 ### Fase 3: Compatibilidad con Postman (1-2 semanas)

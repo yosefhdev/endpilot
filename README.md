@@ -41,6 +41,7 @@ cd apps/desktop && bun run lint && bun test && bun run format:check && bun run b
 apps/desktop/   Tauri 2 + React (src/ = UI, src-tauri/ = núcleo Rust)
 crates/core/    Tipos compartidos entre cliente y servidor
 crates/http/    Motor HTTP (reqwest) que ejecuta los requests
+crates/store/   Base local SQLite (colecciones, entornos, historial)
 server/         API Axum + Dockerfile
 deploy/         Compose, Caddyfile, .env.example
 ```

@@ -1,6 +1,7 @@
 import { Send, Square } from "lucide-react";
 import { useActiveTab, useStore } from "../store";
 import { methodColor } from "../lib/styles";
+import { VarInput } from "./VarInput";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -30,12 +31,11 @@ export function RequestBar() {
             </option>
           ))}
         </select>
-        <input
+        <VarInput
           value={tab.draft.url}
-          onChange={(e) => setUrl(tab.id, e.target.value)}
+          onChange={(url) => setUrl(tab.id, url)}
           placeholder="https://api.ejemplo.com/recurso"
           aria-label="URL"
-          spellCheck={false}
           autoFocus
           className="h-9 min-w-0 flex-1 bg-transparent px-3 font-mono text-[13px] placeholder:text-slate-500 focus:outline-none"
         />

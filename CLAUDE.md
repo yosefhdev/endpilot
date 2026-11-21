@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Estado actual
 
-**Fase 1 completada** (envío de requests con pestañas, editor y visor de respuesta; aún sin persistencia: todo vive en memoria). La API solo tiene `GET /health`. Siguiente: **Fase 2** (modelo local en SQLite). `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
+**Fase 2 completada** (requests con pestañas; colecciones, carpetas, entornos, variables, auth e historial guardados en SQLite local). La API solo tiene `GET /health`. Siguiente: **Fase 3** (compatibilidad con Postman). `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
 
 ## Comandos
 
@@ -40,18 +40,24 @@ Alternativa de escritorio a Postman, autohospedada, local-first, con sync en tie
 
 - **Cliente:** Tauri 2 (núcleo Rust) + React/TypeScript/Vite/Tailwind, Zustand, CodeMirror 6. Las peticiones HTTP se hacen en Rust con `reqwest` (no desde el WebView). Base local SQLite.
 - **Servidor:** Rust + Axum, PostgreSQL, Redis pub/sub (fan-out entre instancias), MinIO, Caddy (único servicio que expone 80/443).
-- **Monorepo:** existen `apps/desktop/`, `crates/core` (tipos compartidos), `crates/http` (motor reqwest), `server/`, `deploy/` (compose dev, Caddyfile, `.env.example`). Se crean en su fase: `crates/{postman-compat,sync-protocol,script-sandbox}`, `server/migrations/`, `deploy/docker-compose.yml` (prod), `deploy/backup/`, `docs/adr/`. Los crates se comparten entre cliente y servidor.
+- **Monorepo:** existen `apps/desktop/`, `crates/core` (tipos compartidos), `crates/http` (motor reqwest), `crates/store` (SQLite local), `server/`, `deploy/` (compose dev, Caddyfile, `.env.example`). Se crean en su fase: `crates/{postman-compat,sync-protocol,script-sandbox}`, `server/migrations/`, `deploy/docker-compose.yml` (prod), `deploy/backup/`, `docs/adr/`. Los crates se comparten entre cliente y servidor.
 
 ### Flujo de un request (implementado)
 
-1. La UI (`apps/desktop/src`) guarda por pestaña un `RequestDraft` en el store de Zustand (`store.ts`). El draft conserva los datos de todos los modos de body; `toHttpRequest` lo convierte al formato del motor al enviar.
+1. La UI (`apps/desktop/src`) guarda por pestaña un `RequestSpec` en el store de Zustand (`store.ts`), opcionalmente ligado a un item guardado (`itemId`; `saved` detecta cambios sin guardar). El spec conserva los datos de todos los modos de body y está sin resolver; `toHttpRequest` (`src/lib/resolve.ts`) resuelve `{{variables}}` (globales < colección < entorno activo; las desconocidas quedan tal cual) y aplica la auth al enviar. Cada envío se agrega al historial.
 2. `invoke("send_request", { id, request })` → comando en `src-tauri/src/lib.rs`, que lanza `endpilot_http::send` en una tarea tokio y guarda su `AbortHandle` por `id`. `cancel_request(id)` la aborta y devuelve un error `cancelled`.
 3. `crates/http` usa un cliente reqwest **por request** (para medir DNS con un resolver propio y registrar redirecciones) y devuelve `HttpResponse`, o un `HttpError` con `kind` clasificado (dns/tls/timeout/connection…). TLS se reconoce por tipo `rustls::Error`, que llega envuelto en varios `io::Error`.
-4. Los tipos viven en `crates/core/src/http.rs` y se reflejan a mano en `apps/desktop/src/types.ts` (serde camelCase). **Si cambias uno, cambia el otro.** Los modos de body usan los nombres de Postman (`raw`, `urlencoded`, `formdata`) para facilitar la Fase 3.
+4. Los tipos viven en `crates/core/src/http.rs` (motor) y `crates/core/src/model.rs` (colecciones, entornos, historial) y se reflejan a mano en `apps/desktop/src/types.ts` (serde camelCase). **Si cambias uno, cambia el otro.** Los modos de body usan los nombres de Postman (`raw`, `urlencoded`, `formdata`) para facilitar la Fase 3.
 5. Params y URL se sincronizan en ambas direcciones (`src/lib/url.ts`) sin codificar ni decodificar, para que `{{variables}}` sobrevivan.
 
 - Colores y fuentes de la UI son tokens de Tailwind v4 en `src/index.css` (`@theme`); los componentes no usan hex sueltos.
-- Los atajos (Ctrl+Enter, Ctrl+T, Ctrl+W) se registran en fase de captura en `App.tsx` para ganarle al keymap de CodeMirror.
+### Base local (implementada)
+
+- `crates/store`: `Store` sobre rusqlite (WAL, migraciones por `PRAGMA user_version`), IDs UUID v7, borrado lógico con `deleted_at` (borrar una carpeta o colección oculta su subárbol), orden con `sort REAL` (mover = punto medio), historial limitado a 500. Archivo: `app_data_dir()/endpilot.db`.
+- `src-tauri/src/store_cmds.rs`: un comando Tauri delgado por método del `Store`. La UI llama `invoke` y luego recarga el `snapshot` completo (`refresh`): los datos son pocos y así el estado no se desincroniza.
+- Confirmaciones con `ask` de `@tauri-apps/plugin-dialog` (requiere el permiso `dialog:allow-message`).
+
+- Los atajos (Ctrl+Enter, Ctrl+S, Ctrl+T, Ctrl+W) se registran en fase de captura en `App.tsx` para ganarle al keymap de CodeMirror.
 
 ### Sincronización (la parte delicada)
 

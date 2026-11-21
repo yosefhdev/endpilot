@@ -4,7 +4,25 @@ import { json } from "@codemirror/lang-json";
 import { xml } from "@codemirror/lang-xml";
 import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
+import { EditorState } from "@codemirror/state";
+import type { CompletionSource } from "@codemirror/autocomplete";
 import type { RawLanguage } from "../types";
+
+const SEP = "\u0000";
+
+/** Suggests `name}}` after `{{`, alongside the language's own completions. */
+const varCompletions =
+  (names: string[]): CompletionSource =>
+  (ctx) => {
+    const m = ctx.matchBefore(/\{\{\s*[^{}\s]*/);
+    if (!m) return null;
+    const from = m.from + m.text.search(/[^{\s]|$/);
+    return {
+      from,
+      validFor: /^[^{}\s]*$/,
+      options: names.map((n) => ({ label: n, apply: `${n}}}`, type: "variable" })),
+    };
+  };
 
 const LANGUAGES = { json, xml, html, javascript } as const;
 
@@ -24,21 +42,29 @@ export function CodeEditor({
   language,
   readOnly = false,
   label,
+  variables,
 }: {
   value: string;
   onChange?: (value: string) => void;
   language: RawLanguage;
   readOnly?: boolean;
   label: string;
+  /** Variable names to suggest after `{{`. */
+  variables?: string[];
 }) {
+  // Join so a new-but-equal array does not rebuild the editor's extensions.
+  const names = variables?.join(SEP) ?? "";
   const extensions = useMemo(
     () => [
       theme,
       EditorView.lineWrapping,
       EditorView.contentAttributes.of({ "aria-label": label }),
       ...(language === "text" ? [] : [LANGUAGES[language]()]),
+      ...(names
+        ? [EditorState.languageData.of(() => [{ autocomplete: varCompletions(names.split(SEP)) }])]
+        : []),
     ],
-    [language, label],
+    [language, label, names],
   );
   return (
     <CodeMirror

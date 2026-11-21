@@ -1,8 +1,10 @@
+mod store_cmds;
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use endpilot_core::http::{HttpError, HttpErrorKind, HttpRequest, HttpResponse};
-use tauri::State;
+use tauri::{Manager, State};
 use tokio::task::AbortHandle;
 
 /// Requests in flight, keyed by the id the UI generates, so they can be cancelled.
@@ -50,10 +52,34 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Inflight::default())
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir)?;
+            app.manage(endpilot_store::Store::open(&dir.join("endpilot.db"))?);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_version,
             send_request,
-            cancel_request
+            cancel_request,
+            store_cmds::snapshot,
+            store_cmds::create_collection,
+            store_cmds::update_collection,
+            store_cmds::delete_collection,
+            store_cmds::duplicate_collection,
+            store_cmds::create_item,
+            store_cmds::update_item,
+            store_cmds::move_item,
+            store_cmds::duplicate_item,
+            store_cmds::delete_item,
+            store_cmds::create_environment,
+            store_cmds::update_environment,
+            store_cmds::delete_environment,
+            store_cmds::set_globals,
+            store_cmds::set_active_environment,
+            store_cmds::add_history,
+            store_cmds::list_history,
+            store_cmds::clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

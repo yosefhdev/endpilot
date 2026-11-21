@@ -87,3 +87,73 @@ export interface HttpError {
   kind: HttpErrorKind;
   message: string;
 }
+
+// Mirrors crates/core/src/model.rs.
+
+export type Auth =
+  | { type: "none" }
+  | { type: "bearer"; token: string }
+  | { type: "basic"; username: string; password: string }
+  | { type: "apikey"; key: string; value: string; in: "header" | "query" };
+
+export type AuthType = Auth["type"];
+
+/** A request as edited and saved (unresolved: may contain `{{variables}}`). */
+export interface RequestSpec {
+  method: string;
+  url: string;
+  params: KeyValue[];
+  headers: KeyValue[];
+  bodyMode: BodyMode;
+  raw: { content: string; language: RawLanguage };
+  urlencoded: KeyValue[];
+  formdata: FormField[];
+  auth: Auth;
+}
+
+export interface Collection {
+  id: string;
+  name: string;
+  variables: KeyValue[];
+  sort: number;
+  updatedAt: number;
+}
+
+export type ItemKind = "folder" | "request";
+
+export interface Item {
+  id: string;
+  collectionId: string;
+  parentId: string | null;
+  kind: ItemKind;
+  name: string;
+  sort: number;
+  request: RequestSpec | null;
+  updatedAt: number;
+}
+
+export interface Environment {
+  id: string;
+  name: string;
+  variables: KeyValue[];
+  sort: number;
+  updatedAt: number;
+}
+
+export interface HistoryEntry {
+  id: string;
+  createdAt: number;
+  request: RequestSpec;
+  status: number | null;
+  durationMs: number | null;
+  size: number | null;
+  error: string | null;
+}
+
+export interface Snapshot {
+  collections: Collection[];
+  items: Item[];
+  environments: Environment[];
+  globals: KeyValue[];
+  activeEnvironmentId: string | null;
+}

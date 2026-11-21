@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { WandSparkles } from "lucide-react";
-import { useActiveTab, useStore } from "../store";
+import { useActiveTab, useStore, useVars } from "../store";
+import { AuthEditor } from "./AuthEditor";
 import { prettyJson } from "../lib/format";
 import type { BodyMode, RawLanguage } from "../types";
 import { CodeEditor } from "./CodeEditor";
 import { KeyValueTable } from "./KeyValueTable";
 import { Count, TabStrip } from "./ui";
 
-type Section = "params" | "headers" | "body";
+type Section = "params" | "auth" | "headers" | "body";
 
 const BODY_MODES: { id: BodyMode; label: string }[] = [
   { id: "none", label: "none" },
@@ -31,6 +32,7 @@ export function RequestEditor() {
   const tab = useActiveTab();
   const { updateDraft, setParams } = useStore();
   const [section, setSection] = useState<Section>("params");
+  const vars = useVars();
   const d = tab.draft;
 
   return (
@@ -48,6 +50,10 @@ export function RequestEditor() {
                 <Count n={activeCount(d.params)} />
               </>
             ),
+          },
+          {
+            id: "auth",
+            label: <>Auth{d.auth.type !== "none" && <Count n={1} />}</>,
           },
           {
             id: "headers",
@@ -68,6 +74,9 @@ export function RequestEditor() {
             rows={d.params}
             onChange={(params) => setParams(tab.id, params)}
           />
+        )}
+        {section === "auth" && (
+          <AuthEditor auth={d.auth} onChange={(auth) => updateDraft(tab.id, { auth })} />
         )}
         {section === "headers" && (
           <KeyValueTable
@@ -142,6 +151,7 @@ export function RequestEditor() {
                   label="Body del request"
                   value={d.raw.content}
                   language={d.raw.language}
+                  variables={[...vars.keys()]}
                   onChange={(content) => updateDraft(tab.id, { raw: { ...d.raw, content } })}
                 />
               </div>

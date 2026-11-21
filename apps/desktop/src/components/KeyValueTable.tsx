@@ -2,6 +2,7 @@ import { FileUp, Trash2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { FormField, KeyValue } from "../types";
 import { inputClass } from "../lib/styles";
+import { VarInput } from "./VarInput";
 
 type Row = KeyValue & Partial<Pick<FormField, "kind">>;
 
@@ -64,9 +65,9 @@ export function KeyValueTable<R extends Row>({
                 )}
               </td>
               <td>
-                <input
+                <VarInput
                   value={row.key}
-                  onChange={(e) => update(i, { key: e.target.value } as Partial<R>)}
+                  onChange={(key) => update(i, { key } as Partial<R>)}
                   placeholder={keyPlaceholder}
                   aria-label="Key"
                   className={`${inputClass} ${row.enabled ? "" : "text-muted line-through"}`}
@@ -98,9 +99,9 @@ export function KeyValueTable<R extends Row>({
                     <span className="truncate">{row.value || "Elegir archivo…"}</span>
                   </button>
                 ) : (
-                  <input
+                  <VarInput
                     value={row.value}
-                    onChange={(e) => update(i, { value: e.target.value } as Partial<R>)}
+                    onChange={(value) => update(i, { value } as Partial<R>)}
                     placeholder="Value"
                     aria-label="Value"
                     className={`${inputClass} ${row.enabled ? "" : "text-muted"}`}

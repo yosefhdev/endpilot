@@ -1,10 +1,33 @@
 import { Loader2, Plus, X } from "lucide-react";
-import { useStore, type Tab } from "../store";
+import { isDirty, useStore, type Tab } from "../store";
 import { methodColor } from "../lib/styles";
 
-function title(tab: Tab) {
-  const url = tab.draft.url.replace(/^https?:\/\//, "");
-  return url || "Nuevo request";
+function useTitle(tab: Tab) {
+  const name = useStore((s) => s.items.find((i) => i.id === tab.itemId)?.name);
+  return name ?? (tab.draft.url.replace(/^https?:\/\//, "") || "Nuevo request");
+}
+
+function TabTitle({ tab, active }: { tab: Tab; active: boolean }) {
+  return <span className={`truncate ${active ? "text-fg" : "text-muted"}`}>{useTitle(tab)}</span>;
+}
+
+function EnvironmentSelect() {
+  const { environments, activeEnvironmentId, setActiveEnvironment } = useStore();
+  return (
+    <select
+      value={activeEnvironmentId ?? ""}
+      onChange={(e) => void setActiveEnvironment(e.target.value || null)}
+      aria-label="Entorno activo"
+      className="mx-2 my-1 h-7 max-w-48 rounded border border-line-strong bg-bg px-2 text-xs"
+    >
+      <option value="">Sin entorno</option>
+      {environments.map((env) => (
+        <option key={env.id} value={env.id}>
+          {env.name}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 export function TabBar() {
@@ -34,9 +57,14 @@ export function TabBar() {
                 >
                   {tab.draft.method}
                 </span>
-                <span className={`truncate ${active ? "text-fg" : "text-muted"}`}>
-                  {title(tab)}
-                </span>
+                <TabTitle tab={tab} active={active} />
+                {isDirty(tab) && !tab.requestId && (
+                  <span
+                    className="size-1.5 shrink-0 rounded-full bg-warn"
+                    aria-label="Cambios sin guardar"
+                    title="Cambios sin guardar (Ctrl+S)"
+                  />
+                )}
                 {tab.requestId && (
                   <Loader2
                     className="size-3 shrink-0 animate-spin text-muted"
@@ -66,6 +94,9 @@ export function TabBar() {
       >
         <Plus className="size-4" aria-hidden />
       </button>
+      <div className="ml-auto flex items-center border-l border-line">
+        <EnvironmentSelect />
+      </div>
     </div>
   );
 }

@@ -1,0 +1,16 @@
+[package]
+name = "endpilot-store"
+description = "Base local SQLite (local-first): colecciones, entornos e historial"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+endpilot-core.workspace = true
+rusqlite = { version = "0.43", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+uuid = { version = "1", features = ["v7"] }
+
+[lints]
+workspace = true

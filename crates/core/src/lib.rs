@@ -1,6 +1,7 @@
 //! Tipos compartidos entre la app de escritorio y el servidor.
 
 pub mod http;
+pub mod model;
 
 use serde::{Deserialize, Serialize};
 
