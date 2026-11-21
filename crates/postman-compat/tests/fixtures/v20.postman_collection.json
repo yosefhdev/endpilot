@@ -1,0 +1,32 @@
+{
+  "info": {
+    "name": "Legacy v2.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Usuarios",
+      "auth": { "type": "basic", "basic": { "username": "admin", "password": "{{pw}}" } },
+      "item": [
+        { "name": "Ver usuario", "request": "https://legacy.test/users/1?expand=roles" },
+        {
+          "name": "Actualizar",
+          "request": {
+            "url": "https://legacy.test/users/1",
+            "method": "PUT",
+            "header": "Content-Type: application/json\nX-Trace: abc",
+            "body": { "mode": "raw", "raw": "{\"name\":\"Ana\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Token",
+      "request": {
+        "url": "https://legacy.test/me",
+        "method": "GET",
+        "auth": { "type": "bearer", "bearer": { "token": "t0k" } }
+      }
+    }
+  ]
+}

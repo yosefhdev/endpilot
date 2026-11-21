@@ -1,10 +1,10 @@
 import { useState, type DragEvent } from "react";
-import { ChevronRight, Folder, FolderOpen, Layers, Plus } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, Import, Layers, Plus } from "lucide-react";
 import { errorText, useStore } from "../store";
 import { methodColor } from "../lib/styles";
 import type { Collection, Item } from "../types";
 import { confirmDelete } from "../lib/confirm";
-import { VariablesDialog } from "./Dialogs";
+import { ImportDialog, VariablesDialog } from "./Dialogs";
 import { MenuButton } from "./ui";
 
 type Drop = { id: string; where: "before" | "after" | "inside" };
@@ -38,6 +38,7 @@ export function CollectionTree() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string>();
   const [varsOf, setVarsOf] = useState<Collection>();
+  const [importing, setImporting] = useState(false);
   const [dragId, setDragId] = useState<string>();
   const [drop, setDrop] = useState<Drop>();
 
@@ -227,6 +228,14 @@ export function CollectionTree() {
       <div className="flex items-center justify-between px-3 py-2">
         <span className="text-xs font-medium tracking-wide text-muted uppercase">Colecciones</span>
         <button
+          onClick={() => setImporting(true)}
+          aria-label="Importar"
+          title="Importar (Postman, OpenAPI, cURL)"
+          className="ml-auto rounded p-1 text-muted hover:bg-raised hover:text-fg"
+        >
+          <Import className="size-4" aria-hidden />
+        </button>
+        <button
           onClick={() => newCollection().catch(report)}
           aria-label="Nueva colección"
           title="Nueva colección"
@@ -244,6 +253,9 @@ export function CollectionTree() {
             className="rounded-md border border-line-strong px-3 py-1.5 text-fg hover:border-accent"
           >
             Crear colección
+          </button>
+          <button onClick={() => setImporting(true)} className="text-accent hover:underline">
+            o importar desde Postman, OpenAPI o cURL
           </button>
         </div>
       ) : (
@@ -294,6 +306,10 @@ export function CollectionTree() {
                         onSelect: () => s.duplicateCollection(c.id).catch(report),
                       },
                       {
+                        label: "Exportar (Postman v2.1)…",
+                        onSelect: () => s.exportCollection(c.id).catch(report),
+                      },
+                      {
                         label: "Eliminar",
                         danger: true,
                         onSelect: async () => {
@@ -325,6 +341,7 @@ export function CollectionTree() {
           })}
         </ul>
       )}
+      {importing && <ImportDialog onClose={() => setImporting(false)} />}
       {varsOf && (
         <VariablesDialog
           title={`Variables de "${varsOf.name}"`}

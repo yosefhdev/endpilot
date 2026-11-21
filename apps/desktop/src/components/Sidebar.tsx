@@ -66,6 +66,10 @@ function EnvironmentsPanel() {
                   },
                   { label: "Editar", onSelect: () => setEditing(env) },
                   {
+                    label: "Exportar (Postman)…",
+                    onSelect: () => s.exportEnvironment(env.id).catch(report),
+                  },
+                  {
                     label: "Eliminar",
                     danger: true,
                     onSelect: async () => {

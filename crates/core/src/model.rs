@@ -145,6 +145,22 @@ pub struct HistoryEntry {
     pub error: Option<String>,
 }
 
+/// A whole collection as a nested tree, without ids: what import produces and export consumes.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CollectionTree {
+    pub name: String,
+    pub variables: Vec<KeyValue>,
+    pub items: Vec<TreeItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+// Trees are small and short-lived; boxing the request would only add noise.
+#[allow(clippy::large_enum_variant)]
+pub enum TreeItem {
+    Folder { name: String, items: Vec<TreeItem> },
+    Request { name: String, request: RequestSpec },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

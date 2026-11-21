@@ -42,6 +42,15 @@ apps/desktop/   Tauri 2 + React (src/ = UI, src-tauri/ = núcleo Rust)
 crates/core/    Tipos compartidos entre cliente y servidor
 crates/http/    Motor HTTP (reqwest) que ejecuta los requests
 crates/store/   Base local SQLite (colecciones, entornos, historial)
+crates/postman-compat/  Importar/exportar Postman, importar OpenAPI 3 y cURL
 server/         API Axum + Dockerfile
 deploy/         Compose, Caddyfile, .env.example
 ```
+
+## Compatibilidad con Postman
+
+- **Importa:** Collection v2.1 y v2.0, environments y globals de Postman; OpenAPI 3.x (JSON o YAML); comandos cURL (también pegándolos en la barra de URL).
+- **Exporta:** Collection v2.1 y environments.
+- **Se pierde al importar:** scripts (pre-request y tests), ejemplos de respuesta, descripciones, variables de ruta (`:id` queda en la URL tal cual), rutas de archivos en form-data (por seguridad: vuelve a elegirlos) y tipos de auth distintos de Bearer, Basic y API key. La auth heredada de carpeta o colección se copia a cada request.
+- **OpenAPI:** una carpeta por tag; `servers[0]` pasa a la variable de colección `baseUrl`; `{id}` en la ruta se vuelve `{{id}}`. Swagger 2.0 no se importa.
+- Pruebas de ida y vuelta (importar, exportar, reimportar) sobre los fixtures de `crates/postman-compat/tests/fixtures/`.

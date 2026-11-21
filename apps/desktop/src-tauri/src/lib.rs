@@ -1,3 +1,4 @@
+mod io_cmds;
 mod store_cmds;
 
 use std::collections::HashMap;
@@ -80,6 +81,10 @@ pub fn run() {
             store_cmds::add_history,
             store_cmds::list_history,
             store_cmds::clear_history,
+            io_cmds::import_text,
+            io_cmds::import_file,
+            io_cmds::export_collection,
+            io_cmds::export_environment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

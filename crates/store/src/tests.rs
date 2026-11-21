@@ -245,3 +245,40 @@ fn history_is_newest_first_and_capped() {
     s.clear_history().unwrap();
     assert!(s.list_history().unwrap().is_empty());
 }
+
+#[test]
+fn import_and_export_collection_tree() {
+    use endpilot_core::model::{CollectionTree, TreeItem};
+    let s = store();
+    let req = |url: &str| RequestSpec {
+        url: url.into(),
+        ..Default::default()
+    };
+    let tree = CollectionTree {
+        name: "Importada".into(),
+        variables: vec![kv("base", "http://x")],
+        items: vec![
+            TreeItem::Folder {
+                name: "F".into(),
+                items: vec![
+                    TreeItem::Request {
+                        name: "a".into(),
+                        request: req("/a"),
+                    },
+                    TreeItem::Folder {
+                        name: "vacía".into(),
+                        items: vec![],
+                    },
+                ],
+            },
+            TreeItem::Request {
+                name: "b".into(),
+                request: req("/b"),
+            },
+        ],
+    };
+    let c = s.import_collection(&tree).unwrap();
+    assert_eq!(c.variables, tree.variables);
+    assert_eq!(s.snapshot().unwrap().items.len(), 4);
+    assert_eq!(s.export_collection(&c.id).unwrap(), tree);
+}

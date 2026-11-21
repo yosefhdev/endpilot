@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { paramsFromUrl, urlWithParams } from "./lib/url";
 import { buildVars, toHttpRequest, type Vars } from "./lib/resolve";
 import type {
@@ -10,6 +10,7 @@ import type {
   HistoryEntry,
   HttpError,
   HttpResponse,
+  ImportResult,
   Item,
   ItemKind,
   KeyValue,
@@ -127,6 +128,13 @@ interface State extends Snapshot {
 
   // history
   clearHistory: () => Promise<void>;
+
+  // import / export
+  importText: (text: string) => Promise<ImportResult>;
+  /** Asks for a file; `null` if the user cancels. */
+  importFile: () => Promise<ImportResult | null>;
+  exportCollection: (id: string) => Promise<void>;
+  exportEnvironment: (id: string) => Promise<void>;
 }
 
 /** Globals < collection of the saved request < active environment. */
@@ -136,6 +144,9 @@ function varsOf(s: Snapshot, itemId?: string): Vars {
   const envVars = s.environments.find((e) => e.id === s.activeEnvironmentId)?.variables ?? [];
   return buildVars(s.globals, collectionVars, envVars);
 }
+
+/** Safe file name from a user-given name. */
+const fileName = (name: string) => name.replace(/[\\/:*?"<>|]+/g, "_").trim() || "export";
 
 const first = newTab();
 
@@ -149,6 +160,13 @@ export const useStore = create<State>((set, get) => {
     const out = await invoke<T>(cmd, args);
     await get().refresh();
     return out;
+  };
+
+  /** cURL opens in a tab; anything else was saved, so reload. */
+  const applyImport = async (result: ImportResult) => {
+    if (result.kind === "request") get().openSpec(result.request);
+    else await get().refresh();
+    return result;
   };
 
   return {
@@ -349,6 +367,33 @@ export const useStore = create<State>((set, get) => {
     clearHistory: async () => {
       await invoke("clear_history");
       set({ history: [] });
+    },
+
+    importText: async (text) => applyImport(await invoke<ImportResult>("import_text", { text })),
+    importFile: async () => {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Postman, OpenAPI", extensions: ["json", "yaml", "yml"] }],
+      });
+      if (typeof path !== "string") return null;
+      return applyImport(await invoke<ImportResult>("import_file", { path }));
+    },
+    exportCollection: async (id) => {
+      const name = get().collections.find((c) => c.id === id)?.name ?? "coleccion";
+      const path = await save({
+        defaultPath: `${fileName(name)}.postman_collection.json`,
+        filters: [{ name: "Postman Collection v2.1", extensions: ["json"] }],
+      });
+      if (path) await invoke("export_collection", { id, path });
+    },
+    exportEnvironment: async (id) => {
+      const name = get().environments.find((e) => e.id === id)?.name ?? "entorno";
+      const path = await save({
+        defaultPath: `${fileName(name)}.postman_environment.json`,
+        filters: [{ name: "Postman Environment", extensions: ["json"] }],
+      });
+      if (path) await invoke("export_environment", { id, path });
     },
   };
 });

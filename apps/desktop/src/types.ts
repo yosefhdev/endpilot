@@ -157,3 +157,9 @@ export interface Snapshot {
   globals: KeyValue[];
   activeEnvironmentId: string | null;
 }
+
+export type ImportResult =
+  | { kind: "collection"; collection: Collection }
+  | { kind: "environment"; environment: Environment }
+  | { kind: "globals"; count: number }
+  | { kind: "request"; request: RequestSpec };

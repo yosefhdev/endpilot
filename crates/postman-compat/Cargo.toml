@@ -1,0 +1,15 @@
+[package]
+name = "endpilot-postman-compat"
+description = "Importar/exportar Postman Collection v2.1/v2.0 y environments; importar OpenAPI 3 y cURL"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+endpilot-core.workspace = true
+# preserve_order: keep folders, requests and OpenAPI paths in document order.
+serde_json = { workspace = true, features = ["preserve_order"] }
+serde_yaml_ng = "0.10"
+
+[lints]
+workspace = true

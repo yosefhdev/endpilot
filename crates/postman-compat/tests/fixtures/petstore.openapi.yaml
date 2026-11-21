@@ -1,0 +1,82 @@
+openapi: 3.0.3
+info:
+  title: Petstore
+  version: 1.0.0
+servers:
+  - url: https://{env}.petstore.test/v1/
+    variables:
+      env:
+        default: api
+security:
+  - bearerAuth: []
+paths:
+  /pets:
+    get:
+      summary: Listar mascotas
+      tags: [pets]
+      parameters:
+        - name: limit
+          in: query
+          required: true
+          schema: { type: integer, default: 10 }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/TraceId"
+    post:
+      operationId: createPet
+      tags: [pets]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewPet" }
+  /pets/{petId}:
+    parameters:
+      - name: petId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [pets]
+      security: []
+  /pets/{petId}/photo:
+    post:
+      tags: [photos]
+      security:
+        - apiKey: []
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                photo: { type: string, format: binary }
+                caption: { type: string, example: Hola }
+  /health:
+    get: {}
+components:
+  parameters:
+    TraceId:
+      name: X-Trace-Id
+      in: header
+      schema: { type: string, example: abc-123 }
+  schemas:
+    NewPet:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: Firulais }
+        born: { type: string, format: date }
+        tags:
+          type: array
+          items: { type: string }
+        owner:
+          allOf:
+            - $ref: "#/components/schemas/Owner"
+    Owner:
+      type: object
+      properties:
+        email: { type: string, format: email }
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+    apiKey: { type: apiKey, in: header, name: X-API-Key }

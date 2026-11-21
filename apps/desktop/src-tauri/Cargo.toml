@@ -20,6 +20,7 @@ serde_json.workspace = true
 endpilot-core.workspace = true
 endpilot-http.workspace = true
 endpilot-store.workspace = true
+endpilot-postman-compat.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tauri-plugin-dialog = "2"
 

@@ -1,7 +1,7 @@
 # Plan del proyecto: Cliente de APIs de escritorio, autohospedado y colaborativo
 
 > Nombre de trabajo: **`<NOMBRE-DEL-PROYECTO>`** (reemplazar; verificar que no choque con marcas existentes).
-> Estado: Fase 2 completada. Última actualización: 2026-11-20.
+> Estado: Fase 3 completada. Última actualización: 2026-11-20.
 
 ## 1. Visión
 
@@ -200,11 +200,11 @@ docker compose -f deploy/docker-compose.yml up -d
 - **Entregable:** herramienta usable de forma local.
 
 ### Fase 3: Compatibilidad con Postman (1-2 semanas)
-- [ ] Importar Collection v2.1/v2.0, Environments y Globals.
-- [ ] Exportar a Collection v2.1 y Environments.
-- [ ] Importar OpenAPI y cURL.
-- [ ] Pruebas de ida y vuelta con colecciones de ejemplo.
-- [ ] Generar código desde un request (cURL, fetch, Python, etc.).
+- [x] Importar Collection v2.1/v2.0, Environments y Globals.
+- [x] Exportar a Collection v2.1 y Environments.
+- [x] Importar OpenAPI y cURL.
+- [x] Pruebas de ida y vuelta con colecciones de ejemplo.
+- [x] Generar código desde un request (cURL, fetch, Python, etc.).
 
 ### Fase 4: Servidor y cuentas (2-3 semanas)
 - [ ] API Axum con migraciones, errores uniformes y documentación (OpenAPI).

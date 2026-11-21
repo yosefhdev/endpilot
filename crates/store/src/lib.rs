@@ -5,7 +5,9 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use endpilot_core::http::KeyValue;
-use endpilot_core::model::{Collection, Environment, HistoryEntry, Item, ItemKind, RequestSpec};
+use endpilot_core::model::{
+    Collection, CollectionTree, Environment, HistoryEntry, Item, ItemKind, RequestSpec, TreeItem,
+};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -63,7 +65,7 @@ pub struct StoreError {
 }
 
 impl StoreError {
-    fn new(message: impl Into<String>) -> Self {
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -281,6 +283,55 @@ fn copy_items(
     Ok(first_id)
 }
 
+fn insert_tree(
+    tx: &Transaction,
+    collection_id: &str,
+    parent_id: Option<&str>,
+    items: &[TreeItem],
+) -> Result<()> {
+    for (i, item) in items.iter().enumerate() {
+        let (name, kind, request, children) = match item {
+            TreeItem::Folder { name, items } => (name, ItemKind::Folder, None, Some(items)),
+            TreeItem::Request { name, request } => {
+                (name, ItemKind::Request, Some(request.clone()), None)
+            }
+        };
+        let row = Item {
+            id: new_id(),
+            collection_id: collection_id.to_owned(),
+            parent_id: parent_id.map(str::to_owned),
+            kind,
+            name: name.clone(),
+            sort: (i + 1) as f64,
+            request,
+            updated_at: 0,
+        };
+        insert_item(tx, &row)?;
+        if let Some(children) = children {
+            insert_tree(tx, collection_id, Some(&row.id), children)?;
+        }
+    }
+    Ok(())
+}
+
+/// `items` sorted by `sort`; returns the children of `parent_id`, recursively.
+fn build_tree(items: &[Item], parent_id: Option<&str>) -> Vec<TreeItem> {
+    items
+        .iter()
+        .filter(|i| i.parent_id.as_deref() == parent_id)
+        .map(|i| match i.kind {
+            ItemKind::Folder => TreeItem::Folder {
+                name: i.name.clone(),
+                items: build_tree(items, Some(&i.id)),
+            },
+            ItemKind::Request => TreeItem::Request {
+                name: i.name.clone(),
+                request: i.request.clone().unwrap_or_default(),
+            },
+        })
+        .collect()
+}
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         Self::init(Connection::open(path)?)
@@ -433,6 +484,37 @@ impl Store {
                 copy_items(tx, &items, &new_id_, None)?;
             }
             get_collection(tx, &new_id_)
+        })
+    }
+
+    /// Inserts a whole imported collection in one transaction (all or nothing).
+    pub fn import_collection(&self, tree: &CollectionTree) -> Result<Collection> {
+        self.tx(|tx| {
+            let id = new_id();
+            tx.execute(
+                "INSERT INTO collections (id, name, variables, sort, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(sort), 0) + 1 FROM collections WHERE deleted_at IS NULL), ?4, ?4)",
+                params![id, tree.name, to_json(&tree.variables)?, now()],
+            )?;
+            insert_tree(tx, &id, None, &tree.items)?;
+            get_collection(tx, &id)
+        })
+    }
+
+    pub fn export_collection(&self, id: &str) -> Result<CollectionTree> {
+        self.with(|conn| {
+            let collection = get_collection(conn, id)?;
+            let items: Vec<Item> = conn
+                .prepare(&format!(
+                    "SELECT {ITEM_COLS} FROM items WHERE collection_id = ? AND deleted_at IS NULL ORDER BY sort"
+                ))?
+                .query_map([id], item_row)?
+                .collect::<rusqlite::Result<_>>()?;
+            Ok(CollectionTree {
+                name: collection.name,
+                variables: collection.variables,
+                items: build_tree(&items, None),
+            })
         })
     }
 
