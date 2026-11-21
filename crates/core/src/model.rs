@@ -42,7 +42,9 @@ pub enum ApiKeyLocation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Auth {
+    /// Use the parent folder's auth, up to the collection's (Postman's default).
     #[default]
+    Inherit,
     None,
     Bearer {
         token: String,
@@ -59,6 +61,31 @@ pub enum Auth {
     },
 }
 
+/// JavaScript run before sending and after the response (Postman's "pre-request" and "tests").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Scripts {
+    pub pre_request: String,
+    pub post_response: String,
+    /// Imported and not reviewed yet: not run until the user enables them. An imported
+    /// script could read secrets and redirect the request to another host.
+    pub blocked: bool,
+}
+
+impl Scripts {
+    pub fn is_empty(&self) -> bool {
+        self.pre_request.trim().is_empty() && self.post_response.trim().is_empty()
+    }
+}
+
+/// What collections and folders pass down to their requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Settings {
+    pub auth: Auth,
+    pub scripts: Scripts,
+}
+
 /// A request as edited and saved (unresolved: may contain `{{variables}}`).
 /// Every body mode keeps its data so switching modes loses nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +100,7 @@ pub struct RequestSpec {
     pub urlencoded: Vec<KeyValue>,
     pub formdata: Vec<FormField>,
     pub auth: Auth,
+    pub scripts: Scripts,
 }
 
 impl Default for RequestSpec {
@@ -86,7 +114,8 @@ impl Default for RequestSpec {
             raw: RawBody::default(),
             urlencoded: vec![],
             formdata: vec![],
-            auth: Auth::None,
+            auth: Auth::Inherit,
+            scripts: Scripts::default(),
         }
     }
 }
@@ -97,6 +126,8 @@ pub struct Collection {
     pub id: String,
     pub name: String,
     pub variables: Vec<KeyValue>,
+    /// Auth "inherit" at the collection means no auth.
+    pub settings: Settings,
     pub sort: f64,
     pub updated_at: i64,
 }
@@ -120,6 +151,8 @@ pub struct Item {
     pub sort: f64,
     /// Present for requests only.
     pub request: Option<RequestSpec>,
+    /// Present for folders only.
+    pub settings: Option<Settings>,
     pub updated_at: i64,
 }
 
@@ -150,6 +183,7 @@ pub struct HistoryEntry {
 pub struct CollectionTree {
     pub name: String,
     pub variables: Vec<KeyValue>,
+    pub settings: Settings,
     pub items: Vec<TreeItem>,
 }
 
@@ -157,8 +191,15 @@ pub struct CollectionTree {
 // Trees are small and short-lived; boxing the request would only add noise.
 #[allow(clippy::large_enum_variant)]
 pub enum TreeItem {
-    Folder { name: String, items: Vec<TreeItem> },
-    Request { name: String, request: RequestSpec },
+    Folder {
+        name: String,
+        settings: Settings,
+        items: Vec<TreeItem>,
+    },
+    Request {
+        name: String,
+        request: RequestSpec,
+    },
 }
 
 #[cfg(test)]
@@ -169,7 +210,7 @@ mod tests {
     fn request_spec_fills_missing_fields() {
         let spec: RequestSpec = serde_json::from_str(r#"{"url":"http://x"}"#).unwrap();
         assert_eq!(spec.method, "GET");
-        assert_eq!(spec.auth, Auth::None);
+        assert_eq!(spec.auth, Auth::Inherit);
         assert_eq!(spec.raw.language, RawLanguage::Json);
     }
 

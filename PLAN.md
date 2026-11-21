@@ -205,6 +205,8 @@ docker compose -f deploy/docker-compose.yml up -d
 - [x] Importar OpenAPI y cURL.
 - [x] Pruebas de ida y vuelta con colecciones de ejemplo.
 - [x] Generar código desde un request (cURL, fetch, Python, etc.).
+- [x] Herencia de auth (request → carpeta → colección) y ajustes de colección/carpeta (variables, auth, scripts). Adelantado a pedido.
+- [x] Scripts pre-request y post-response en QuickJS con `pm.*` esencial, tests y consola. Adelantado desde la Fase 7.
 
 ### Fase 4: Servidor y cuentas (2-3 semanas)
 - [ ] API Axum con migraciones, errores uniformes y documentación (OpenAPI).
@@ -230,9 +232,10 @@ docker compose -f deploy/docker-compose.yml up -d
 - [ ] Gestión de miembros (cambiar rol, quitar).
 
 ### Fase 7: Scripts, tests y OAuth (3 semanas)
-- [ ] Sandbox QuickJS con API `pm.*` (`pm.test`, `pm.environment`, `pm.response`, etc.).
-- [ ] Scripts pre-request y post-response, con consola.
-- [ ] Panel de resultados de tests y collection runner.
+- [x] Sandbox QuickJS con API `pm.*` (`pm.test`, `pm.environment`, `pm.response`, etc.). Hecho en la Fase 3.
+- [x] Scripts pre-request y post-response, con consola. Hecho en la Fase 3.
+- [x] Panel de resultados de tests. Hecho en la Fase 3.
+- [ ] Collection runner y más cobertura de `pm.*` (`pm.sendRequest`, `pm.cookies`, body de `pm.request`).
 - [ ] OAuth 2.0 (client credentials, authorization code con PKCE).
 
 ### Fase 8: Versiones, secretos y auditoría (2 semanas)

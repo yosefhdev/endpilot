@@ -54,3 +54,16 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-[toast-in"] {
+    animation: none;
+  }
+}

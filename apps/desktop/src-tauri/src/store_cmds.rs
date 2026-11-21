@@ -1,7 +1,9 @@
 //! Thin Tauri wrappers over `endpilot_store::Store`.
 
 use endpilot_core::http::KeyValue;
-use endpilot_core::model::{Collection, Environment, HistoryEntry, Item, ItemKind, RequestSpec};
+use endpilot_core::model::{
+    Collection, Environment, HistoryEntry, Item, ItemKind, RequestSpec, Settings,
+};
 use endpilot_store::{Snapshot, Store, StoreError};
 use tauri::State;
 
@@ -23,8 +25,19 @@ pub fn update_collection(
     id: String,
     name: Option<String>,
     variables: Option<Vec<KeyValue>>,
+    settings: Option<Settings>,
 ) -> R<Collection> {
-    store.update_collection(&id, name.as_deref(), variables.as_deref())
+    store.update_collection(
+        &id,
+        name.as_deref(),
+        variables.as_deref(),
+        settings.as_ref(),
+    )
+}
+
+#[tauri::command]
+pub fn approve_scripts(store: State<'_, Store>, collection_id: String) -> R<()> {
+    store.approve_scripts(&collection_id)
 }
 
 #[tauri::command]
@@ -55,8 +68,9 @@ pub fn update_item(
     id: String,
     name: Option<String>,
     request: Option<RequestSpec>,
+    settings: Option<Settings>,
 ) -> R<Item> {
-    store.update_item(&id, name.as_deref(), request.as_ref())
+    store.update_item(&id, name.as_deref(), request.as_ref(), settings.as_ref())
 }
 
 #[tauri::command]

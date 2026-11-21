@@ -1,4 +1,4 @@
-import type { HttpRequest, KeyValue, RequestBody, RequestSpec } from "../types";
+import type { Auth, HttpRequest, KeyValue, RequestBody, RequestSpec, Settings } from "../types";
 
 export type Vars = Map<string, string>;
 
@@ -15,6 +15,21 @@ export function buildVars(...scopes: KeyValue[][]): Vars {
 /** Replaces known `{{name}}`; unknown ones stay as typed so the user sees them in the request. */
 export function resolveText(text: string, vars: Vars): string {
   return text.replace(VAR, (whole, name: string) => vars.get(name) ?? whole);
+}
+
+export type Segment = { text: string; start: number; name?: string };
+
+/** Splits text into plain runs and `{{name}}` runs, keeping offsets (for highlighting). */
+export function varSegments(text: string): Segment[] {
+  const out: Segment[] = [];
+  let last = 0;
+  for (const m of text.matchAll(VAR)) {
+    if (m.index > last) out.push({ text: text.slice(last, m.index), start: last });
+    out.push({ text: m[0], start: m.index, name: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last), start: last });
+  return out;
 }
 
 export function unresolvedVars(text: string, vars: Vars): string[] {
@@ -34,6 +49,27 @@ export function insertVar(text: string, cursor: number, start: number, name: str
   return { text: before + rest, cursor: before.length };
 }
 
+/** A collection or folder above a request, with what it passes down. */
+export interface Ancestor {
+  kind: "collection" | "folder";
+  name: string;
+  settings: Settings;
+}
+
+/**
+ * The auth a request sends: its own, or the nearest ancestor's that is not "inherit"
+ * (`ancestors` go from the collection down). Inherit all the way up means no auth.
+ */
+export function effectiveAuth(auth: Auth, ancestors: Ancestor[]): { auth: Auth; from?: string } {
+  if (auth.type !== "inherit") return { auth };
+  for (const a of [...ancestors].reverse())
+    if (a.settings.auth.type !== "inherit") return { auth: a.settings.auth, from: describe(a) };
+  return { auth: { type: "none" }, from: ancestors[0] && describe(ancestors[0]) };
+}
+
+const describe = (a: Ancestor) =>
+  `${a.kind === "collection" ? "la colección" : "la carpeta"} "${a.name}"`;
+
 function utf8Base64(text: string): string {
   return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
 }
@@ -43,14 +79,21 @@ const resolveRows = <T extends KeyValue>(rows: T[], vars: Vars): T[] =>
     .filter((r) => r.enabled)
     .map((r) => ({ ...r, key: resolveText(r.key, vars), value: resolveText(r.value, vars) }));
 
-/** Turns the saved request into what the engine sends: variables resolved, auth applied. */
-export function toHttpRequest(spec: RequestSpec, vars: Vars): HttpRequest {
+/**
+ * Turns the saved request into what the engine sends: variables resolved, auth applied.
+ * `inherited` is used when the request's auth is "inherit" (see `effectiveAuth`).
+ */
+export function toHttpRequest(
+  spec: RequestSpec,
+  vars: Vars,
+  inherited: Auth = { type: "none" },
+): HttpRequest {
   let url = resolveText(spec.url, vars);
   const headers = resolveRows(spec.headers, vars);
   const hasHeader = (name: string) =>
     headers.some((h) => h.key.toLowerCase() === name.toLowerCase());
 
-  const auth = spec.auth;
+  const auth = spec.auth.type === "inherit" ? inherited : spec.auth;
   if (auth.type === "bearer" && !hasHeader("authorization")) {
     headers.push({
       key: "Authorization",

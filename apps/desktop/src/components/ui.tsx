@@ -40,6 +40,7 @@ export function TabStrip<T extends string>({
           return (
             <button
               key={t.id}
+              type="button"
               role="tab"
               aria-selected={selected}
               tabIndex={selected ? 0 : -1}
@@ -71,6 +72,7 @@ export function Modal({
   submitLabel = "Guardar",
   children,
   wide = false,
+  large = false,
 }: {
   title: string;
   onClose: () => void;
@@ -78,6 +80,8 @@ export function Modal({
   submitLabel?: string;
   children: ReactNode;
   wide?: boolean;
+  /** Big fixed-height dialog for editors with tabs. */
+  large?: boolean;
 }) {
   return (
     <dialog
@@ -87,7 +91,7 @@ export function Modal({
       onClose={onClose}
       onCancel={onClose}
       className={`m-auto w-[calc(100%-2rem)] rounded-lg border border-line-strong bg-surface text-fg shadow-2xl backdrop:bg-black/60 ${
-        wide ? "max-w-2xl" : "max-w-md"
+        large ? "h-[80vh] max-w-4xl" : wide ? "max-w-2xl" : "max-w-md"
       }`}
     >
       <form
@@ -96,7 +100,7 @@ export function Modal({
           e.preventDefault();
           onSubmit();
         }}
-        className="flex max-h-[80vh] flex-col"
+        className={`flex flex-col ${large ? "h-full" : "max-h-[80vh]"}`}
       >
         <h2 className="border-b border-line px-4 py-3 text-sm font-semibold">{title}</h2>
         <div className="min-h-0 flex-1 overflow-auto px-4 py-3">{children}</div>

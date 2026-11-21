@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { WandSparkles } from "lucide-react";
-import { useActiveTab, useStore, useVars } from "../store";
+import { useShallow } from "zustand/react/shallow";
+import { ancestorsOfItem, useActiveTab, useStore, useVars } from "../store";
+import { effectiveAuth } from "../lib/resolve";
+import { ScriptsEditor } from "./ScriptsEditor";
 import { AuthEditor } from "./AuthEditor";
 import { prettyJson } from "../lib/format";
 import type { BodyMode, RawLanguage } from "../types";
@@ -8,7 +11,7 @@ import { CodeEditor } from "./CodeEditor";
 import { KeyValueTable } from "./KeyValueTable";
 import { Count, TabStrip } from "./ui";
 
-type Section = "params" | "auth" | "headers" | "body";
+type Section = "params" | "auth" | "headers" | "body" | "scripts";
 
 const BODY_MODES: { id: BodyMode; label: string }[] = [
   { id: "none", label: "none" },
@@ -34,6 +37,11 @@ export function RequestEditor() {
   const [section, setSection] = useState<Section>("params");
   const vars = useVars();
   const d = tab.draft;
+  const [collections, items] = useStore(useShallow((s) => [s.collections, s.items]));
+  const inherited = effectiveAuth(
+    { type: "inherit" },
+    ancestorsOfItem({ collections, items }, tab.itemId),
+  );
 
   return (
     <section aria-label="Request" className="flex min-h-0 flex-1 flex-col">
@@ -53,7 +61,9 @@ export function RequestEditor() {
           },
           {
             id: "auth",
-            label: <>Auth{d.auth.type !== "none" && <Count n={1} />}</>,
+            label: (
+              <>Auth{d.auth.type !== "none" && d.auth.type !== "inherit" && <Count n={1} />}</>
+            ),
           },
           {
             id: "headers",
@@ -65,6 +75,17 @@ export function RequestEditor() {
             ),
           },
           { id: "body", label: <>Body{d.bodyMode !== "none" && <Count n={1} />}</> },
+          {
+            id: "scripts",
+            label: (
+              <>
+                Scripts
+                <Count
+                  n={[d.scripts.preRequest, d.scripts.postResponse].filter((c) => c.trim()).length}
+                />
+              </>
+            ),
+          },
         ]}
       />
       <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
@@ -76,7 +97,17 @@ export function RequestEditor() {
           />
         )}
         {section === "auth" && (
-          <AuthEditor auth={d.auth} onChange={(auth) => updateDraft(tab.id, { auth })} />
+          <AuthEditor
+            auth={d.auth}
+            inherited={inherited}
+            onChange={(auth) => updateDraft(tab.id, { auth })}
+          />
+        )}
+        {section === "scripts" && (
+          <ScriptsEditor
+            scripts={d.scripts}
+            onChange={(scripts) => updateDraft(tab.id, { scripts })}
+          />
         )}
         {section === "headers" && (
           <KeyValueTable

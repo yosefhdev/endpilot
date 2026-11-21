@@ -91,6 +91,7 @@ export interface HttpError {
 // Mirrors crates/core/src/model.rs.
 
 export type Auth =
+  | { type: "inherit" }
   | { type: "none" }
   | { type: "bearer"; token: string }
   | { type: "basic"; username: string; password: string }
@@ -109,12 +110,29 @@ export interface RequestSpec {
   urlencoded: KeyValue[];
   formdata: FormField[];
   auth: Auth;
+  scripts: Scripts;
+}
+
+/** JavaScript run before sending and after the response. */
+export interface Scripts {
+  preRequest: string;
+  postResponse: string;
+  /** Imported and not reviewed yet: not run until the user enables them. */
+  blocked: boolean;
+}
+
+/** What collections and folders pass down to their requests. */
+export interface Settings {
+  auth: Auth;
+  scripts: Scripts;
 }
 
 export interface Collection {
   id: string;
   name: string;
   variables: KeyValue[];
+  /** Auth "inherit" at the collection means no auth. */
+  settings: Settings;
   sort: number;
   updatedAt: number;
 }
@@ -129,6 +147,8 @@ export interface Item {
   name: string;
   sort: number;
   request: RequestSpec | null;
+  /** Folders only. */
+  settings: Settings | null;
   updatedAt: number;
 }
 
@@ -163,3 +183,59 @@ export type ImportResult =
   | { kind: "environment"; environment: Environment }
   | { kind: "globals"; count: number }
   | { kind: "request"; request: RequestSpec };
+
+// Mirrors crates/script-sandbox.
+
+export type VarMap = Record<string, string>;
+
+export interface ScriptVariables {
+  globals: VarMap;
+  collection: VarMap;
+  environment: VarMap | null;
+  local: VarMap;
+}
+
+export interface ScriptRequest {
+  method: string;
+  url: string;
+  headers: KeyValue[];
+}
+
+export interface ScriptInput {
+  scripts: { source: string; code: string }[];
+  variables: ScriptVariables;
+  request: ScriptRequest;
+  response: {
+    code: number;
+    status: string;
+    headers: KeyValue[];
+    body: string;
+    responseTime: number;
+  } | null;
+}
+
+export interface LogLine {
+  level: "log" | "info" | "warn" | "error";
+  text: string;
+}
+
+export interface TestResult {
+  name: string;
+  passed: boolean;
+  error: string | null;
+}
+
+export interface ScriptOutput {
+  variables: ScriptVariables;
+  request: ScriptRequest;
+  logs: LogLine[];
+  tests: TestResult[];
+  errors: string[];
+}
+
+/** What the scripts of one send left: shown in the response panel. */
+export interface ScriptReport {
+  logs: LogLine[];
+  tests: TestResult[];
+  errors: string[];
+}

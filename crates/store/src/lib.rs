@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use endpilot_core::http::KeyValue;
 use endpilot_core::model::{
-    Collection, CollectionTree, Environment, HistoryEntry, Item, ItemKind, RequestSpec, TreeItem,
+    Collection, CollectionTree, Environment, HistoryEntry, Item, ItemKind, RequestSpec, Settings,
+    TreeItem,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde::Serialize;
@@ -14,7 +15,8 @@ use serde::de::DeserializeOwned;
 
 const HISTORY_LIMIT: i64 = 500;
 
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE collections (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -57,7 +59,13 @@ CREATE TABLE history (
     error TEXT
 );
 CREATE INDEX history_created ON history(created_at DESC);
-"#];
+"#,
+    // Auth and scripts for collections and folders (JSON `Settings`).
+    r#"
+ALTER TABLE collections ADD COLUMN settings TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE items ADD COLUMN settings TEXT;
+"#,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StoreError {
@@ -137,8 +145,9 @@ fn kind_str(kind: ItemKind) -> &'static str {
     }
 }
 
-const COLLECTION_COLS: &str = "id, name, variables, sort, updated_at";
-const ITEM_COLS: &str = "id, collection_id, parent_id, kind, name, sort, request, updated_at";
+const COLLECTION_COLS: &str = "id, name, variables, sort, updated_at, settings";
+const ITEM_COLS: &str =
+    "id, collection_id, parent_id, kind, name, sort, request, updated_at, settings";
 const ENV_COLS: &str = "id, name, variables, sort, updated_at";
 
 fn collection_row(r: &Row) -> rusqlite::Result<Collection> {
@@ -148,17 +157,20 @@ fn collection_row(r: &Row) -> rusqlite::Result<Collection> {
         variables: from_json(&r.get::<_, String>(2)?)?,
         sort: r.get(3)?,
         updated_at: r.get(4)?,
+        settings: from_json(&r.get::<_, String>(5)?)?,
     })
 }
 
 fn item_row(r: &Row) -> rusqlite::Result<Item> {
     let kind: String = r.get(3)?;
     let request: Option<String> = r.get(6)?;
+    let settings: Option<String> = r.get(8)?;
+    let folder = kind == "folder";
     Ok(Item {
         id: r.get(0)?,
         collection_id: r.get(1)?,
         parent_id: r.get(2)?,
-        kind: if kind == "folder" {
+        kind: if folder {
             ItemKind::Folder
         } else {
             ItemKind::Request
@@ -167,6 +179,11 @@ fn item_row(r: &Row) -> rusqlite::Result<Item> {
         sort: r.get(5)?,
         request: request.as_deref().map(from_json).transpose()?,
         updated_at: r.get(7)?,
+        // Folders created before settings existed have none: same as the defaults.
+        settings: match settings {
+            Some(json) => Some(from_json(&json)?),
+            None => folder.then(Settings::default),
+        },
     })
 }
 
@@ -238,8 +255,8 @@ fn next_sort(tx: &Connection, collection_id: &str, parent_id: Option<&str>) -> R
 fn insert_item(tx: &Transaction, item: &Item) -> Result<()> {
     let t = now();
     tx.execute(
-        "INSERT INTO items (id, collection_id, parent_id, kind, name, sort, request, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        "INSERT INTO items (id, collection_id, parent_id, kind, name, sort, request, created_at, updated_at, settings)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
         params![
             item.id,
             item.collection_id,
@@ -248,7 +265,8 @@ fn insert_item(tx: &Transaction, item: &Item) -> Result<()> {
             item.name,
             item.sort,
             item.request.as_ref().map(to_json).transpose()?,
-            t
+            t,
+            item.settings.as_ref().map(to_json).transpose()?
         ],
     )?;
     Ok(())
@@ -290,10 +308,20 @@ fn insert_tree(
     items: &[TreeItem],
 ) -> Result<()> {
     for (i, item) in items.iter().enumerate() {
-        let (name, kind, request, children) = match item {
-            TreeItem::Folder { name, items } => (name, ItemKind::Folder, None, Some(items)),
+        let (name, kind, request, settings, children) = match item {
+            TreeItem::Folder {
+                name,
+                settings,
+                items,
+            } => (
+                name,
+                ItemKind::Folder,
+                None,
+                Some(settings.clone()),
+                Some(items),
+            ),
             TreeItem::Request { name, request } => {
-                (name, ItemKind::Request, Some(request.clone()), None)
+                (name, ItemKind::Request, Some(request.clone()), None, None)
             }
         };
         let row = Item {
@@ -304,6 +332,7 @@ fn insert_tree(
             name: name.clone(),
             sort: (i + 1) as f64,
             request,
+            settings,
             updated_at: 0,
         };
         insert_item(tx, &row)?;
@@ -322,6 +351,7 @@ fn build_tree(items: &[Item], parent_id: Option<&str>) -> Vec<TreeItem> {
         .map(|i| match i.kind {
             ItemKind::Folder => TreeItem::Folder {
                 name: i.name.clone(),
+                settings: i.settings.clone().unwrap_or_default(),
                 items: build_tree(items, Some(&i.id)),
             },
             ItemKind::Request => TreeItem::Request {
@@ -437,14 +467,17 @@ impl Store {
         id: &str,
         name: Option<&str>,
         variables: Option<&[KeyValue]>,
+        settings: Option<&Settings>,
     ) -> Result<Collection> {
         self.tx(|tx| {
             get_collection(tx, id)?;
             let variables = variables.map(to_json).transpose()?;
+            let settings = settings.map(to_json).transpose()?;
             tx.execute(
-                "UPDATE collections SET name = COALESCE(?2, name), variables = COALESCE(?3, variables), updated_at = ?4
+                "UPDATE collections SET name = COALESCE(?2, name), variables = COALESCE(?3, variables),
+                     settings = COALESCE(?5, settings), updated_at = ?4
                  WHERE id = ?1",
-                params![id, name, variables, now()],
+                params![id, name, variables, now(), settings],
             )?;
             get_collection(tx, id)
         })
@@ -471,9 +504,15 @@ impl Store {
             let new_id_ = new_id();
             let t = now();
             tx.execute(
-                "INSERT INTO collections (id, name, variables, sort, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(sort), 0) + 1 FROM collections WHERE deleted_at IS NULL), ?4, ?4)",
-                params![new_id_, format!("{} (copia)", original.name), to_json(&original.variables)?, t],
+                "INSERT INTO collections (id, name, variables, sort, created_at, updated_at, settings)
+                 VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(sort), 0) + 1 FROM collections WHERE deleted_at IS NULL), ?4, ?4, ?5)",
+                params![
+                    new_id_,
+                    format!("{} (copia)", original.name),
+                    to_json(&original.variables)?,
+                    t,
+                    to_json(&original.settings)?
+                ],
             )?;
             let roots: Vec<String> = tx
                 .prepare("SELECT id FROM items WHERE collection_id = ? AND parent_id IS NULL AND deleted_at IS NULL ORDER BY sort")?
@@ -492,12 +531,56 @@ impl Store {
         self.tx(|tx| {
             let id = new_id();
             tx.execute(
-                "INSERT INTO collections (id, name, variables, sort, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(sort), 0) + 1 FROM collections WHERE deleted_at IS NULL), ?4, ?4)",
-                params![id, tree.name, to_json(&tree.variables)?, now()],
+                "INSERT INTO collections (id, name, variables, sort, created_at, updated_at, settings)
+                 VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(sort), 0) + 1 FROM collections WHERE deleted_at IS NULL), ?4, ?4, ?5)",
+                params![
+                    id,
+                    tree.name,
+                    to_json(&tree.variables)?,
+                    now(),
+                    to_json(&tree.settings)?
+                ],
             )?;
             insert_tree(tx, &id, None, &tree.items)?;
             get_collection(tx, &id)
+        })
+    }
+
+    /// The user reviewed the collection's imported scripts: let all of them run.
+    pub fn approve_scripts(&self, collection_id: &str) -> Result<()> {
+        self.tx(|tx| {
+            let mut collection = get_collection(tx, collection_id)?;
+            collection.settings.scripts.blocked = false;
+            let t = now();
+            tx.execute(
+                "UPDATE collections SET settings = ?2, updated_at = ?3 WHERE id = ?1",
+                params![collection_id, to_json(&collection.settings)?, t],
+            )?;
+            let items: Vec<Item> = tx
+                .prepare(&format!(
+                    "SELECT {ITEM_COLS} FROM items WHERE collection_id = ? AND deleted_at IS NULL"
+                ))?
+                .query_map([collection_id], item_row)?
+                .collect::<rusqlite::Result<_>>()?;
+            for mut item in items {
+                let blocked = match (&mut item.request, &mut item.settings) {
+                    (Some(r), _) => std::mem::take(&mut r.scripts.blocked),
+                    (None, Some(s)) => std::mem::take(&mut s.scripts.blocked),
+                    (None, None) => false,
+                };
+                if blocked {
+                    tx.execute(
+                        "UPDATE items SET request = ?2, settings = ?3, updated_at = ?4 WHERE id = ?1",
+                        params![
+                            item.id,
+                            item.request.as_ref().map(to_json).transpose()?,
+                            item.settings.as_ref().map(to_json).transpose()?,
+                            t
+                        ],
+                    )?;
+                }
+            }
+            Ok(())
         })
     }
 
@@ -513,6 +596,7 @@ impl Store {
             Ok(CollectionTree {
                 name: collection.name,
                 variables: collection.variables,
+                settings: collection.settings,
                 items: build_tree(&items, None),
             })
         })
@@ -549,6 +633,7 @@ impl Store {
                     ItemKind::Request => Some(request.unwrap_or_default()),
                     ItemKind::Folder => None,
                 },
+                settings: (kind == ItemKind::Folder).then(Settings::default),
                 updated_at: 0,
             };
             insert_item(tx, &item)?;
@@ -561,16 +646,23 @@ impl Store {
         id: &str,
         name: Option<&str>,
         request: Option<&RequestSpec>,
+        settings: Option<&Settings>,
     ) -> Result<Item> {
         self.tx(|tx| {
             let item = get_item(tx, id)?;
             if request.is_some() && item.kind != ItemKind::Request {
                 return Err(StoreError::new("Una carpeta no guarda un request"));
             }
+            if settings.is_some() && item.kind != ItemKind::Folder {
+                return Err(StoreError::new("Solo las carpetas tienen ajustes propios"));
+            }
             let request = request.map(to_json).transpose()?;
+            let settings = settings.map(to_json).transpose()?;
             tx.execute(
-                "UPDATE items SET name = COALESCE(?2, name), request = COALESCE(?3, request), updated_at = ?4 WHERE id = ?1",
-                params![id, name, request, now()],
+                "UPDATE items SET name = COALESCE(?2, name), request = COALESCE(?3, request),
+                     settings = COALESCE(?5, settings), updated_at = ?4
+                 WHERE id = ?1",
+                params![id, name, request, now(), settings],
             )?;
             get_item(tx, id)
         })

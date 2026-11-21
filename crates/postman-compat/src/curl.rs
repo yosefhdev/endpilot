@@ -194,10 +194,10 @@ pub fn parse_curl(text: &str) -> Result<RequestSpec, String> {
             .map(|f| {
                 let (key, value) = f.split_once('=').unwrap_or((f, ""));
                 match value.strip_prefix('@') {
-                    Some(path) => FormField {
+                    // The path is dropped: a pasted command must not pick which local file gets sent.
+                    Some(_) => FormField {
                         key: key.into(),
-                        // Drop curl's ";type=…" suffix.
-                        value: path.split(";type=").next().unwrap_or(path).into(),
+                        value: String::new(),
                         kind: FormFieldKind::File,
                         enabled: true,
                     },
@@ -291,7 +291,10 @@ mod tests {
             }
         );
         assert_eq!(spec.formdata[1].kind, FormFieldKind::File);
-        assert_eq!(spec.formdata[1].value, "/tmp/a.png");
+        assert_eq!(
+            spec.formdata[1].value, "",
+            "imported file paths are dropped"
+        );
 
         let spec = parse_curl("curl -G https://x.com/s -d q=rust -d n=5").unwrap();
         assert_eq!(spec.method, "GET");

@@ -78,6 +78,7 @@
     },
     {
       "name": "Login",
+      "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json();", "pm.environment.set(\"token\", body.token);"] } }],
       "request": {
         "auth": { "type": "noauth" },
         "method": "POST",

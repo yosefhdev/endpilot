@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { errorText, useActiveTab, useStore, useVars } from "../store";
+import { ShieldAlert } from "lucide-react";
+import { blockedScriptCount, errorText, useActiveTab, useStore, useVars } from "../store";
 import { CODE_LANGUAGES, generateCode, type CodeLanguage } from "../lib/codegen";
-import { toHttpRequest } from "../lib/resolve";
-import type { ImportResult, KeyValue } from "../types";
+import type { Auth, ImportResult, KeyValue, Settings } from "../types";
+import { AuthEditor } from "./AuthEditor";
 import { CodeEditor } from "./CodeEditor";
 import { KeyValueTable } from "./KeyValueTable";
-import { Modal } from "./ui";
+import { ScriptsEditor } from "./ScriptsEditor";
+import { Count, Modal, TabStrip } from "./ui";
 
 const textClass =
   "h-8 w-full rounded border border-line-strong bg-bg px-2 text-[13px] focus:border-slate-500 focus:outline-none";
@@ -159,7 +161,13 @@ export function SaveDialog({ tabId }: { tabId: string }) {
 }
 
 function importedText(r: ImportResult) {
-  if (r.kind === "collection") return `Colección "${r.collection.name}" importada.`;
+  if (r.kind === "collection") {
+    const blocked = blockedScriptCount(useStore.getState(), r.collection.id);
+    const note = blocked
+      ? " Trae scripts: no se ejecutan hasta que los revises y actives en sus ajustes."
+      : "";
+    return `Colección "${r.collection.name}" importada correctamente.${note}`;
+  }
   if (r.kind === "environment") return `Entorno "${r.environment.name}" importado.`;
   if (r.kind === "globals") return `${r.count} variables globales importadas.`;
   return "";
@@ -167,25 +175,24 @@ function importedText(r: ImportResult) {
 
 /** Import from a file or pasted text: Postman collection/environment/globals, OpenAPI 3 or cURL. */
 export function ImportDialog({ onClose }: { onClose: () => void }) {
-  const { importText, importFile } = useStore();
+  const { importText, importFile, notify } = useStore();
   const [text, setText] = useState("");
   const [error, setError] = useState<string>();
-  const [done, setDone] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const run = async (task: () => Promise<ImportResult | null>) => {
+  /** `pasted`: on error keep the dialog open so the pasted text is not lost. */
+  const run = async (task: () => Promise<ImportResult | null>, pasted: boolean) => {
     setBusy(true);
     setError(undefined);
-    setDone(undefined);
     try {
       const result = await task();
-      // A cURL opens in a tab behind the dialog: close it. Saved imports stay to allow more.
-      if (result?.kind === "request") onClose();
-      else if (result) {
-        setDone(importedText(result));
-        setText("");
-      }
+      if (!result) return; // file picker cancelled
+      onClose();
+      // A cURL opens in a new tab, which is feedback enough.
+      if (result.kind !== "request") notify("success", importedText(result));
     } catch (e) {
-      setError(errorText(e));
+      if (pasted) return setError(errorText(e));
+      onClose();
+      notify("error", `No se pudo importar el archivo. ${errorText(e)}`);
     } finally {
       setBusy(false);
     }
@@ -199,14 +206,14 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       onSubmit={() => {
         if (!text.trim()) return setError("Pega el contenido a importar o elige un archivo.");
-        void run(() => importText(text));
+        void run(() => importText(text), true);
       }}
     >
       <div className="flex flex-col gap-3">
         <button
           type="button"
           disabled={busy}
-          onClick={() => void run(importFile)}
+          onClick={() => void run(importFile, false)}
           className="flex h-20 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-line-strong text-[13px] text-muted hover:border-accent hover:text-fg disabled:opacity-50"
         >
           <span className="font-medium text-fg">Elegir archivo…</span>
@@ -228,9 +235,6 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
             {error}
           </p>
         )}
-        <p role="status" className="text-xs text-accent">
-          {done}
-        </p>
       </div>
     </Modal>
   );
@@ -239,10 +243,11 @@ export function ImportDialog({ onClose }: { onClose: () => void }) {
 /** Code for the active request with variables and auth already applied. */
 export function CodeDialog({ onClose }: { onClose: () => void }) {
   const tab = useActiveTab();
-  const vars = useVars();
+  useVars(); // re-render when variables change
+  const httpRequestFor = useStore((s) => s.httpRequestFor);
   const [language, setLanguage] = useState<CodeLanguage>("curl");
   const [copied, setCopied] = useState(false);
-  const code = generateCode(toHttpRequest(tab.draft, vars), language);
+  const code = generateCode(httpRequestFor(tab), language);
 
   return (
     <Modal
@@ -282,6 +287,169 @@ export function CodeDialog({ onClose }: { onClose: () => void }) {
         <p className="text-xs text-muted">
           Incluye las variables del entorno activo ya resueltas, también tokens y contraseñas.
         </p>
+      </div>
+    </Modal>
+  );
+}
+
+type SettingsSection = "variables" | "auth" | "scripts";
+
+/**
+ * Collection or folder settings: what its requests inherit (auth, scripts) and,
+ * for a collection, its variables.
+ */
+export function SettingsDialog({
+  title,
+  settings: initial,
+  variables: initialVariables,
+  inherited,
+  blockedCount = 0,
+  onApproveAll,
+  onSave,
+  onClose,
+}: {
+  title: string;
+  /** Collections only: imported script sets not reviewed yet, anywhere inside. */
+  blockedCount?: number;
+  onApproveAll?: () => Promise<void>;
+  settings: Settings;
+  /** Collections only. */
+  variables?: KeyValue[];
+  /** Folders only: what "inherit" resolves to. */
+  inherited?: { auth: Auth; from?: string };
+  onSave: (settings: Settings, variables?: KeyValue[]) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [settings, setSettings] = useState(initial);
+  const [variables, setVariables] = useState(initialVariables);
+  const [section, setSection] = useState<SettingsSection>(variables ? "variables" : "auth");
+  const [error, setError] = useState<string>();
+  const scriptCount = [settings.scripts.preRequest, settings.scripts.postResponse].filter((c) =>
+    c.trim(),
+  ).length;
+
+  return (
+    <Modal
+      title={title}
+      large
+      onClose={onClose}
+      onSubmit={async () => {
+        try {
+          await onSave(
+            settings,
+            variables?.filter((v) => v.key.trim() || v.value),
+          );
+          onClose();
+        } catch (e) {
+          setError(errorText(e));
+        }
+      }}
+    >
+      <div className="flex h-full flex-col">
+        {blockedCount > 0 && onApproveAll && (
+          <div
+            role="alert"
+            className="mb-3 flex items-start gap-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-[13px]"
+          >
+            <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />
+            <p className="flex-1">
+              {blockedCount === 1 ? "Hay 1 grupo" : `Hay ${blockedCount} grupos`} de scripts
+              importados sin revisar en esta colección; no se ejecutan. Revísalos en la pestaña
+              Scripts de la colección, sus carpetas y requests antes de activarlos.
+            </p>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await onApproveAll();
+                  setSettings((s) => ({ ...s, scripts: { ...s.scripts, blocked: false } }));
+                } catch (e) {
+                  setError(errorText(e));
+                }
+              }}
+              className="h-7 shrink-0 rounded border border-warn/60 px-3 text-xs font-medium text-warn hover:bg-warn/15"
+            >
+              Activar todos
+            </button>
+          </div>
+        )}
+        <TabStrip
+          label="Secciones de ajustes"
+          value={section}
+          onChange={setSection}
+          items={[
+            ...(variables
+              ? [
+                  {
+                    id: "variables" as const,
+                    label: (
+                      <>
+                        Variables
+                        <Count n={variables.filter((v) => v.enabled && v.key).length} />
+                      </>
+                    ),
+                  },
+                ]
+              : []),
+            { id: "auth", label: "Auth" },
+            {
+              id: "scripts",
+              label: (
+                <>
+                  Scripts
+                  <Count n={scriptCount} />
+                </>
+              ),
+            },
+          ]}
+        />
+        <div className="min-h-0 flex-1 overflow-auto pt-3">
+          {section === "variables" && variables && (
+            <>
+              <KeyValueTable
+                label="Variables de la colección"
+                keyPlaceholder="Variable"
+                rows={variables}
+                onChange={setVariables}
+              />
+              <p className="mt-2 text-xs text-muted">
+                Valen para todos los requests de la colección. Un entorno activo con la misma
+                variable tiene prioridad.
+              </p>
+            </>
+          )}
+          {section === "auth" && (
+            <>
+              <AuthEditor
+                auth={settings.auth}
+                inherited={inherited}
+                onChange={(auth) => setSettings({ ...settings, auth })}
+              />
+              <p className="mt-3 text-xs text-muted">
+                Los requests con auth &quot;Heredar del padre&quot; usan esta.
+              </p>
+            </>
+          )}
+          {section === "scripts" && (
+            <>
+              <p className="mb-2 text-xs text-muted">
+                Corren en cada request de dentro, antes que los del request (colección → carpeta →
+                request).
+              </p>
+              <div className="h-[calc(100%-1.5rem)]">
+                <ScriptsEditor
+                  scripts={settings.scripts}
+                  onChange={(scripts) => setSettings({ ...settings, scripts })}
+                />
+              </div>
+            </>
+          )}
+        </div>
+        {error && (
+          <p role="alert" className="mt-2 text-xs text-danger">
+            {error}
+          </p>
+        )}
       </div>
     </Modal>
   );

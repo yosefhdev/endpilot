@@ -41,6 +41,16 @@ async fn send_request(
     }
 }
 
+/// Runs pre-request or post-response scripts off the async runtime (QuickJS blocks).
+#[tauri::command]
+async fn run_scripts(
+    input: endpilot_script_sandbox::ScriptInput,
+) -> Result<endpilot_script_sandbox::ScriptOutput, String> {
+    tokio::task::spawn_blocking(move || endpilot_script_sandbox::run(&input))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn cancel_request(id: String, inflight: State<'_, Inflight>) {
     if let Some(handle) = inflight.0.lock().unwrap().remove(&id) {
@@ -63,9 +73,11 @@ pub fn run() {
             app_version,
             send_request,
             cancel_request,
+            run_scripts,
             store_cmds::snapshot,
             store_cmds::create_collection,
             store_cmds::update_collection,
+            store_cmds::approve_scripts,
             store_cmds::delete_collection,
             store_cmds::duplicate_collection,
             store_cmds::create_item,

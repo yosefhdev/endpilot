@@ -71,6 +71,8 @@ pub(crate) fn import_openapi(doc: &Value) -> Result<CollectionTree, String> {
             value: base_url,
             enabled: true,
         }],
+        // Security is resolved per operation onto each request.
+        settings: Default::default(),
         items: root,
     })
 }
@@ -83,6 +85,7 @@ fn folder<'a>(root: &'a mut Vec<TreeItem>, tag: &str) -> &'a mut Vec<TreeItem> {
         .unwrap_or_else(|| {
             root.push(TreeItem::Folder {
                 name: tag.into(),
+                settings: Default::default(),
                 items: vec![],
             });
             root.len() - 1

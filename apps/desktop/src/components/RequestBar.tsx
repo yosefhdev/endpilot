@@ -51,6 +51,7 @@ export function RequestBar() {
                 .catch((err) => console.error(errorText(err)));
             }}
             placeholder="https://api.ejemplo.com/recurso"
+            wrapperClassName="flex-1"
             aria-label="URL"
             autoFocus
             className="h-9 min-w-0 flex-1 bg-transparent px-3 font-mono text-[13px] placeholder:text-slate-500 focus:outline-none"

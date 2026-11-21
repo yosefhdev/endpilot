@@ -19,7 +19,7 @@ describe("generateCode", () => {
   test("curl quotes safely and adds the raw Content-Type", () => {
     expect(generateCode(base, "curl")).toBe(
       [
-        "curl 'https://api.x.com/users?a=1'",
+        "curl --url 'https://api.x.com/users?a=1'",
         "-X 'POST'",
         "-H 'Authorization: Bearer t'",
         "-H 'Content-Type: application/json'",

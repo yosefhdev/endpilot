@@ -91,6 +91,7 @@ export function KeyValueTable<R extends Row>({
               <td className="pl-1">
                 {row.kind === "file" ? (
                   <button
+                    type="button"
                     onClick={() => pickFile(i)}
                     className="flex h-8 w-full items-center gap-2 truncate rounded px-2 text-left font-mono text-muted hover:bg-raised hover:text-fg"
                     title={row.value || undefined}
@@ -111,6 +112,7 @@ export function KeyValueTable<R extends Row>({
               <td className="text-center">
                 {!isBlank && (
                   <button
+                    type="button"
                     onClick={() => remove(i)}
                     aria-label={`Eliminar ${row.key || "fila"}`}
                     className="rounded p-1.5 text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-danger focus-visible:opacity-100"

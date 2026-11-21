@@ -206,12 +206,13 @@ function HistoryPanel() {
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ width }: { width: number }) {
   const [panel, setPanel] = useState<Panel>("collections");
   return (
     <aside
       aria-label="Barra lateral"
-      className="flex w-72 shrink-0 flex-col border-r border-line bg-surface"
+      style={{ width }}
+      className="flex shrink-0 flex-col border-r border-line bg-surface"
     >
       <TabStrip
         label="Secciones"

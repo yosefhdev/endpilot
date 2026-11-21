@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Estado actual
 
-**Fase 3 completada** (requests con pestañas; colecciones, entornos, variables, auth e historial en SQLite local; importar/exportar Postman, importar OpenAPI y cURL, generar código). La API solo tiene `GET /health`. Siguiente: **Fase 4** (servidor y cuentas). `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
+**Fase 3 completada** (requests con pestañas; colecciones, entornos, variables, auth e historial en SQLite local; importar/exportar Postman, importar OpenAPI y cURL, generar código; herencia de auth, ajustes de colección/carpeta y scripts pre/post con `pm.*`). La API solo tiene `GET /health`. Siguiente: **Fase 4** (servidor y cuentas). `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
 
 ## Comandos
 
@@ -40,7 +40,7 @@ Alternativa de escritorio a Postman, autohospedada, local-first, con sync en tie
 
 - **Cliente:** Tauri 2 (núcleo Rust) + React/TypeScript/Vite/Tailwind, Zustand, CodeMirror 6. Las peticiones HTTP se hacen en Rust con `reqwest` (no desde el WebView). Base local SQLite.
 - **Servidor:** Rust + Axum, PostgreSQL, Redis pub/sub (fan-out entre instancias), MinIO, Caddy (único servicio que expone 80/443).
-- **Monorepo:** existen `apps/desktop/`, `crates/core` (tipos compartidos), `crates/http` (motor reqwest), `crates/store` (SQLite local), `crates/postman-compat` (importar/exportar), `server/`, `deploy/` (compose dev, Caddyfile, `.env.example`). Se crean en su fase: `crates/{sync-protocol,script-sandbox}`, `server/migrations/`, `deploy/docker-compose.yml` (prod), `deploy/backup/`, `docs/adr/`. Los crates se comparten entre cliente y servidor.
+- **Monorepo:** existen `apps/desktop/`, `crates/core` (tipos compartidos), `crates/http` (motor reqwest), `crates/store` (SQLite local), `crates/postman-compat` (importar/exportar), `crates/script-sandbox` (QuickJS, `pm.*`), `server/`, `deploy/` (compose dev, Caddyfile, `.env.example`). Se crean en su fase: `crates/sync-protocol`, `server/migrations/`, `deploy/docker-compose.yml` (prod), `deploy/backup/`, `docs/adr/`. Los crates se comparten entre cliente y servidor.
 
 ### Flujo de un request (implementado)
 
@@ -56,6 +56,8 @@ Alternativa de escritorio a Postman, autohospedada, local-first, con sync en tie
 - `crates/store`: `Store` sobre rusqlite (WAL, migraciones por `PRAGMA user_version`), IDs UUID v7, borrado lógico con `deleted_at` (borrar una carpeta o colección oculta su subárbol), orden con `sort REAL` (mover = punto medio), historial limitado a 500. Archivo: `app_data_dir()/endpilot.db`.
 - `src-tauri/src/store_cmds.rs`: un comando Tauri delgado por método del `Store`. La UI llama `invoke` y luego recarga el `snapshot` completo (`refresh`): los datos son pocos y así el estado no se desincroniza.
 - Importar/exportar: `crates/postman-compat` convierte texto (cURL, Postman, OpenAPI; JSON o YAML, detectado por contenido) en `model::CollectionTree` o `RequestSpec`, y de vuelta a Postman v2.1. `Store::import_collection`/`export_collection` pasan el árbol a filas en una transacción. Comandos en `src-tauri/src/io_cmds.rs`; el código generado (cURL, fetch, Python) se hace en `src/lib/codegen.ts` sobre el request ya resuelto. Al tocar el formato, corre `cargo test -p endpilot-postman-compat` (fixtures de ida y vuelta).
+- Herencia: `Auth::Inherit` (por defecto en requests nuevos) toma la auth de la carpeta más cercana que no herede, hasta la colección (`effectiveAuth` en `src/lib/resolve.ts`, ancestros con `ancestorsOf` en `store.ts`). Colecciones y carpetas guardan `Settings { auth, scripts }` en la columna `settings` (migración 2).
+- Scripts: `send` en `store.ts` junta los scripts colección → carpetas → request, llama `run_scripts` (Rust, `crates/script-sandbox`, `spawn_blocking`) antes y después de enviar, y guarda las variables cambiadas (`applyVarMap` en `src/lib/scripts.ts`). La API `pm` vive en `crates/script-sandbox/src/prelude.js`; Rust solo pasa JSON. Los scripts importados llegan con `Scripts.blocked = true` y `scriptChain` los salta hasta que el usuario los activa (`approve_scripts` para toda la colección). No quites ese bloqueo: es la defensa contra colecciones maliciosas.
 - Confirmaciones con `ask` de `@tauri-apps/plugin-dialog` (requiere el permiso `dialog:allow-message`; abrir/guardar archivos, `dialog:allow-open`/`allow-save`).
 
 - Los atajos (Ctrl+Enter, Ctrl+S, Ctrl+T, Ctrl+W) se registran en fase de captura en `App.tsx` para ganarle al keymap de CodeMirror.

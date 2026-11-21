@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { Check, CircleAlert, Copy, Loader2 } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, CircleX, Copy, Loader2 } from "lucide-react";
 import { useActiveTab, useStore } from "../store";
 import { formatBytes, formatMs, headerValue, prettyJson } from "../lib/format";
-import type { HttpError, HttpErrorKind, HttpResponse, RawLanguage } from "../types";
+import type { HttpError, HttpErrorKind, HttpResponse, RawLanguage, ScriptReport } from "../types";
 import { CodeEditor } from "./CodeEditor";
 import { Count, TabStrip } from "./ui";
 
-type Section = "body" | "headers" | "cookies" | "timeline";
+type Section = "body" | "headers" | "cookies" | "timeline" | "tests" | "console";
 
 const ERROR_TEXT: Record<HttpErrorKind, { title: string; hint: string }> = {
   invalidUrl: {
@@ -80,9 +80,14 @@ export function ResponseViewer() {
       </div>
     );
   } else if (tab.error) {
-    content = <ErrorView error={tab.error} />;
+    content = (
+      <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+        <ErrorView error={tab.error} />
+        {tab.scriptReport && <ScriptReportView report={tab.scriptReport} />}
+      </div>
+    );
   } else if (tab.response) {
-    content = <ResponseView key={tab.id} response={tab.response} />;
+    content = <ResponseView key={tab.id} response={tab.response} report={tab.scriptReport} />;
   } else {
     content = (
       <div className="flex flex-1 flex-col items-center justify-center gap-1 text-center text-muted">
@@ -98,7 +103,7 @@ export function ResponseViewer() {
   return (
     <section
       aria-label="Respuesta"
-      className="flex min-h-0 flex-1 flex-col border-t border-line-strong"
+      className="flex min-h-24 flex-1 flex-col border-t border-line-strong"
     >
       {content}
     </section>
@@ -108,7 +113,7 @@ export function ResponseViewer() {
 function ErrorView({ error }: { error: HttpError }) {
   const text = ERROR_TEXT[error.kind] ?? ERROR_TEXT.other;
   return (
-    <div className="flex flex-1 items-start justify-center overflow-auto p-6" role="alert">
+    <div className="flex items-start justify-center p-6" role="alert">
       <div className="w-full max-w-2xl rounded-md border border-red-500/30 bg-red-500/5 p-4">
         <div className="flex items-center gap-2 font-medium text-danger">
           <CircleAlert className="size-4" aria-hidden />
@@ -123,8 +128,9 @@ function ErrorView({ error }: { error: HttpError }) {
   );
 }
 
-function ResponseView({ response: r }: { response: HttpResponse }) {
+function ResponseView({ response: r, report }: { response: HttpResponse; report?: ScriptReport }) {
   const [section, setSection] = useState<Section>("body");
+  const failed = report?.tests.filter((t) => !t.passed).length ?? 0;
   return (
     <>
       <TabStrip
@@ -152,6 +158,40 @@ function ResponseView({ response: r }: { response: HttpResponse }) {
             ),
           },
           { id: "timeline", label: "Timeline" },
+          ...(report?.tests.length
+            ? [
+                {
+                  id: "tests" as const,
+                  label: (
+                    <>
+                      Tests
+                      <span
+                        className={`ml-1 text-xs tabular-nums ${failed ? "text-danger" : "text-accent"}`}
+                      >
+                        {report.tests.length - failed}/{report.tests.length}
+                      </span>
+                    </>
+                  ),
+                },
+              ]
+            : []),
+          ...(report && (report.logs.length || report.errors.length)
+            ? [
+                {
+                  id: "console" as const,
+                  label: (
+                    <>
+                      Consola
+                      {report.errors.length > 0 && (
+                        <span className="ml-1 text-xs text-danger tabular-nums">
+                          {report.errors.length}
+                        </span>
+                      )}
+                    </>
+                  ),
+                },
+              ]
+            : []),
         ]}
         trailing={
           <div className="flex items-center gap-3 text-xs tabular-nums">
@@ -208,6 +248,8 @@ function ResponseView({ response: r }: { response: HttpResponse }) {
           />
         )}
         {section === "timeline" && <TimelineView response={r} />}
+        {section === "tests" && report && <TestsView report={report} />}
+        {section === "console" && report && <ConsoleView report={report} />}
       </div>
     </>
   );
@@ -387,5 +429,58 @@ function TimelineView({ response: r }: { response: HttpResponse }) {
         </div>
       )}
     </div>
+  );
+}
+
+function TestsView({ report }: { report: ScriptReport }) {
+  return (
+    <ul aria-label="Resultados de los tests" className="divide-y divide-line text-[13px]">
+      {report.tests.map((t, i) => (
+        <li key={i} className="flex items-start gap-2 px-3 py-2">
+          {t.passed ? (
+            <CircleCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-label="Pasó" />
+          ) : (
+            <CircleX className="mt-0.5 size-4 shrink-0 text-danger" aria-label="Falló" />
+          )}
+          <div className="min-w-0">
+            <p className="text-fg">{t.name}</p>
+            {t.error && <p className="font-mono text-xs text-danger">{t.error}</p>}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const LOG_TONE = { log: "text-fg", info: "text-info", warn: "text-warn", error: "text-danger" };
+
+function ConsoleView({ report }: { report: ScriptReport }) {
+  return (
+    <div role="log" aria-label="Consola de scripts" className="p-3 font-mono text-xs">
+      {report.errors.map((e, i) => (
+        <p key={`e${i}`} className="flex gap-2 py-0.5 text-danger">
+          <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+          <span className="whitespace-pre-wrap">{e}</span>
+        </p>
+      ))}
+      {report.logs.map((l, i) => (
+        <p key={i} className={`py-0.5 whitespace-pre-wrap ${LOG_TONE[l.level] ?? "text-fg"}`}>
+          {l.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** Script output when there is no response to attach it to (pre-request failed). */
+function ScriptReportView({ report }: { report: ScriptReport }) {
+  if (!report.logs.length && !report.tests.length) return null;
+  return (
+    <section aria-label="Salida de los scripts" className="mx-auto w-full max-w-2xl px-6 pb-6">
+      <h3 className="mb-1 text-xs font-medium tracking-wide text-muted uppercase">Consola</h3>
+      <div className="rounded-md border border-line">
+        <ConsoleView report={{ ...report, errors: [] }} />
+      </div>
+    </section>
   );
 }

@@ -44,6 +44,11 @@ fn v21_fixture_imports_every_supported_field() {
     assert!(!list.headers[1].enabled);
     assert_eq!(
         list.auth,
+        Auth::Inherit,
+        "inheritance is kept, not flattened"
+    );
+    assert_eq!(
+        tree.settings.auth,
         Auth::Bearer {
             token: "{{token}}".into()
         }
@@ -54,11 +59,7 @@ fn v21_fixture_imports_every_supported_field() {
     assert_eq!(create.raw.language, RawLanguage::Json);
 
     let upload = find(&tree.items, "Subir imagen").unwrap();
-    assert_eq!(
-        upload.auth,
-        Auth::None,
-        "folder noauth overrides the collection"
-    );
+    assert_eq!(upload.auth, Auth::Inherit, "inherits its folder's noauth");
     assert_eq!(upload.formdata[0].kind, FormFieldKind::File);
     assert_eq!(
         upload.formdata[0].value, "",
@@ -69,6 +70,12 @@ fn v21_fixture_imports_every_supported_field() {
     let login = find(&tree.items, "Login").unwrap();
     assert_eq!(login.body_mode, BodyMode::Urlencoded);
     assert_eq!(login.urlencoded[1].value, "{{password}}");
+    assert!(
+        login
+            .scripts
+            .post_response
+            .ends_with("pm.environment.set(\"token\", body.token);")
+    );
 
     let status = find(&tree.items, "Estado (API key en query)").unwrap();
     assert!(
@@ -94,8 +101,12 @@ fn v20_fixture_imports_and_roundtrips() {
     let view = find(&tree.items, "Ver usuario").unwrap();
     assert_eq!(view.method, "GET");
     assert_eq!(view.params[0].key, "expand");
+    assert_eq!(view.auth, Auth::Inherit);
+    let endpilot_core::model::TreeItem::Folder { settings, .. } = &tree.items[0] else {
+        panic!("folder expected")
+    };
     assert_eq!(
-        view.auth,
+        settings.auth,
         Auth::Basic {
             username: "admin".into(),
             password: "{{pw}}".into()

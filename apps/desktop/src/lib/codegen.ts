@@ -34,7 +34,8 @@ const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const str = (s: string) => JSON.stringify(s);
 
 function curl(req: HttpRequest): string {
-  const parts = [`curl ${req.method === "HEAD" ? "-I " : ""}${sh(req.url)}`];
+  // --url: a URL starting with "-" would otherwise be read as an option.
+  const parts = [`curl ${req.method === "HEAD" ? "-I " : ""}--url ${sh(req.url)}`];
   if (!["GET", "HEAD"].includes(req.method)) parts.push(`-X ${sh(req.method)}`);
   for (const h of headersOf(req)) parts.push(`-H ${sh(`${h.key}: ${h.value}`)}`);
   const body = req.body;

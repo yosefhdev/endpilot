@@ -1,11 +1,14 @@
 //! Postman Collection v2.1 / v2.0 and environments.
 //!
-//! Known limits (documented in README): scripts, examples, descriptions and auth types other than
-//! Bearer/Basic/API key are dropped. Inherited auth (folder/collection) is resolved onto each request.
+//! Known limits (documented in README): examples, descriptions and auth types other than
+//! Bearer/Basic/API key are dropped. Auth inheritance and scripts (`event`) are kept as they are.
 
 use endpilot_core::{
     http::{FormField, FormFieldKind, KeyValue, RawLanguage},
-    model::{ApiKeyLocation, Auth, BodyMode, CollectionTree, RawBody, RequestSpec, TreeItem},
+    model::{
+        ApiKeyLocation, Auth, BodyMode, CollectionTree, RawBody, RequestSpec, Scripts, Settings,
+        TreeItem,
+    },
 };
 use serde_json::{Map, Value, json};
 
@@ -14,15 +17,47 @@ use crate::{kv_list, non_empty, query_params, text_of};
 const SCHEMA_V21: &str = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json";
 
 pub(crate) fn import_collection(doc: &Value) -> CollectionTree {
-    let inherited = parse_auth(&doc["auth"]).unwrap_or_default();
     CollectionTree {
         name: non_empty(text_of(&doc["info"]["name"]), "Colección importada"),
         variables: kv_list(&doc["variable"]),
-        items: import_items(&doc["item"], &inherited),
+        settings: settings_of(doc),
+        items: import_items(&doc["item"]),
     }
 }
 
-fn import_items(items: &Value, inherited: &Auth) -> Vec<TreeItem> {
+/// Auth and scripts of a collection or folder.
+fn settings_of(node: &Value) -> Settings {
+    Settings {
+        auth: parse_auth(&node["auth"]),
+        scripts: parse_scripts(&node["event"]),
+    }
+}
+
+/// `[{ listen: "prerequest" | "test", script: { exec: [lines] | "text" } }]`
+fn parse_scripts(events: &Value) -> Scripts {
+    let code = |listen: &str| -> String {
+        let Some(event) = events
+            .as_array()
+            .and_then(|list| list.iter().find(|e| e["listen"] == listen))
+        else {
+            return String::new();
+        };
+        match &event["script"]["exec"] {
+            Value::Array(lines) => lines.iter().map(text_of).collect::<Vec<_>>().join("\n"),
+            other => text_of(other),
+        }
+    };
+    let mut scripts = Scripts {
+        pre_request: code("prerequest"),
+        post_response: code("test"),
+        blocked: false,
+    };
+    // Untrusted until the user reviews them.
+    scripts.blocked = !scripts.is_empty();
+    scripts
+}
+
+fn import_items(items: &Value) -> Vec<TreeItem> {
     items
         .as_array()
         .into_iter()
@@ -30,13 +65,15 @@ fn import_items(items: &Value, inherited: &Auth) -> Vec<TreeItem> {
         .filter_map(|it| {
             let name = text_of(&it["name"]);
             if it["item"].is_array() {
-                let auth = parse_auth(&it["auth"]).unwrap_or_else(|| inherited.clone());
                 Some(TreeItem::Folder {
                     name: non_empty(name, "Carpeta"),
-                    items: import_items(&it["item"], &auth),
+                    settings: settings_of(it),
+                    items: import_items(&it["item"]),
                 })
             } else if !it["request"].is_null() {
-                let request = import_request(&it["request"], inherited);
+                let mut request = import_request(&it["request"]);
+                // Scripts live on the item, not on its request.
+                request.scripts = parse_scripts(&it["event"]);
                 Some(TreeItem::Request {
                     name: non_empty(name, &request.url),
                     request,
@@ -48,8 +85,8 @@ fn import_items(items: &Value, inherited: &Auth) -> Vec<TreeItem> {
         .collect()
 }
 
-/// `None` when the item inherits auth from its parent (absent or `inherit`).
-fn parse_auth(auth: &Value) -> Option<Auth> {
+/// Absent or `inherit` means the parent's auth.
+fn parse_auth(auth: &Value) -> Auth {
     let param = |key: &str| -> String {
         let ty = text_of(&auth["type"]);
         match &auth[ty.as_str()] {
@@ -63,16 +100,19 @@ fn parse_auth(auth: &Value) -> Option<Auth> {
             other => text_of(&other[key]),
         }
     };
-    match auth["type"].as_str()? {
-        "inherit" => None,
-        "bearer" => Some(Auth::Bearer {
+    let Some(ty) = auth["type"].as_str() else {
+        return Auth::Inherit;
+    };
+    match ty {
+        "inherit" => Auth::Inherit,
+        "bearer" => Auth::Bearer {
             token: param("token"),
-        }),
-        "basic" => Some(Auth::Basic {
+        },
+        "basic" => Auth::Basic {
             username: param("username"),
             password: param("password"),
-        }),
-        "apikey" => Some(Auth::Apikey {
+        },
+        "apikey" => Auth::Apikey {
             key: param("key"),
             value: param("value"),
             location: if param("in") == "query" {
@@ -80,19 +120,18 @@ fn parse_auth(auth: &Value) -> Option<Auth> {
             } else {
                 ApiKeyLocation::Header
             },
-        }),
+        },
         // noauth and types we do not support yet (oauth2, digest…).
-        _ => Some(Auth::None),
+        _ => Auth::None,
     }
 }
 
-fn import_request(r: &Value, inherited: &Auth) -> RequestSpec {
+fn import_request(r: &Value) -> RequestSpec {
     // v2.0 allows a request to be just its URL.
     if let Some(url) = r.as_str() {
         return RequestSpec {
             url: url.into(),
             params: query_params(url),
-            auth: inherited.clone(),
             ..Default::default()
         };
     }
@@ -128,7 +167,7 @@ fn import_request(r: &Value, inherited: &Auth) -> RequestSpec {
         url,
         params,
         headers,
-        auth: parse_auth(&r["auth"]).unwrap_or_else(|| inherited.clone()),
+        auth: parse_auth(&r["auth"]),
         ..Default::default()
     };
 
@@ -194,21 +233,55 @@ fn import_request(r: &Value, inherited: &Auth) -> RequestSpec {
 }
 
 pub fn export_collection(tree: &CollectionTree) -> Value {
-    json!({
+    let mut doc = json!({
         "info": { "name": tree.name, "schema": SCHEMA_V21 },
         "item": tree.items.iter().map(export_item).collect::<Vec<_>>(),
         "variable": kv_rows(&tree.variables, "string"),
-    })
+    });
+    export_settings(&mut doc, &tree.settings.auth, &tree.settings.scripts);
+    doc
 }
 
 fn export_item(item: &TreeItem) -> Value {
     match item {
-        TreeItem::Folder { name, items } => {
-            json!({ "name": name, "item": items.iter().map(export_item).collect::<Vec<_>>() })
+        TreeItem::Folder {
+            name,
+            settings,
+            items,
+        } => {
+            let mut folder =
+                json!({ "name": name, "item": items.iter().map(export_item).collect::<Vec<_>>() });
+            export_settings(&mut folder, &settings.auth, &settings.scripts);
+            folder
         }
         TreeItem::Request { name, request } => {
-            json!({ "name": name, "request": export_request(request) })
+            let mut item = json!({ "name": name, "request": export_request(request) });
+            export_settings(&mut item, &Auth::Inherit, &request.scripts);
+            item
         }
+    }
+}
+
+/// Adds `auth` (omitted = inherit, as Postman writes it) and `event` (only if there are scripts).
+fn export_settings(node: &mut Value, auth: &Auth, scripts: &Scripts) {
+    if let Some(auth) = export_auth(auth) {
+        node["auth"] = auth;
+    }
+    let event = |listen: &str, code: &str| {
+        json!({
+            "listen": listen,
+            "script": { "type": "text/javascript", "exec": code.split('\n').collect::<Vec<_>>() },
+        })
+    };
+    let mut events = vec![];
+    if !scripts.pre_request.trim().is_empty() {
+        events.push(event("prerequest", &scripts.pre_request));
+    }
+    if !scripts.post_response.trim().is_empty() {
+        events.push(event("test", &scripts.post_response));
+    }
+    if !events.is_empty() {
+        node["event"] = events.into();
     }
 }
 
@@ -230,8 +303,10 @@ fn export_request(spec: &RequestSpec) -> Value {
         "method": spec.method,
         "header": kv_rows(&spec.headers, "text"),
         "url": export_url(&spec.url, &spec.params),
-        "auth": export_auth(&spec.auth),
     });
+    if let Some(auth) = export_auth(&spec.auth) {
+        req["auth"] = auth;
+    }
     let body = match spec.body_mode {
         BodyMode::None => None,
         BodyMode::Raw => Some(json!({
@@ -263,14 +338,16 @@ fn export_request(spec: &RequestSpec) -> Value {
     req
 }
 
-fn export_auth(auth: &Auth) -> Value {
+/// `None` for inherit: Postman reads a missing `auth` as "inherit from parent".
+fn export_auth(auth: &Auth) -> Option<Value> {
     let params = |pairs: &[(&str, &str)]| -> Vec<Value> {
         pairs
             .iter()
             .map(|(k, v)| json!({ "key": k, "value": v, "type": "string" }))
             .collect()
     };
-    match auth {
+    Some(match auth {
+        Auth::Inherit => return None,
         Auth::None => json!({ "type": "noauth" }),
         Auth::Bearer { token } => {
             json!({ "type": "bearer", "bearer": params(&[("token", token)]) })
@@ -290,7 +367,7 @@ fn export_auth(auth: &Auth) -> Value {
             };
             json!({ "type": "apikey", "apikey": params(&[("key", key), ("value", value), ("in", place)]) })
         }
-    }
+    })
 }
 
 /// Postman's URL object. `raw` is authoritative; the split parts help Postman's own UI.
@@ -360,33 +437,46 @@ mod tests {
     }
 
     #[test]
-    fn auth_inherits_down_the_tree_unless_overridden() {
+    fn auth_inheritance_and_scripts_are_kept() {
         let doc = json!({
             "info": { "name": "C" },
             "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{t}}" }] },
             "item": [
                 { "name": "F", "auth": { "type": "noauth" }, "item": [
-                    { "name": "in folder", "request": { "method": "GET", "url": "x" } }
+                    { "name": "in folder", "request": { "method": "GET", "url": "x" },
+                      "event": [{ "listen": "test", "script": { "exec": ["a;", "b;"] } }] }
                 ]},
                 { "name": "root", "request": { "method": "GET", "url": "x", "auth": { "type": "inherit" } } },
                 { "name": "v2.0", "request": { "url": "x", "auth": { "type": "basic", "basic": { "username": "u", "password": "p" } } } },
             ]
         });
         let tree = import_collection(&doc);
-        let auth_of = |item: &TreeItem| match item {
-            TreeItem::Request { request, .. } => request.auth.clone(),
-            TreeItem::Folder { items, .. } => match &items[0] {
-                TreeItem::Request { request, .. } => request.auth.clone(),
-                _ => unreachable!(),
-            },
-        };
-        assert_eq!(auth_of(&tree.items[0]), Auth::None);
         assert_eq!(
-            auth_of(&tree.items[1]),
+            tree.settings.auth,
             Auth::Bearer {
                 token: "{{t}}".into()
             }
         );
+        let TreeItem::Folder {
+            settings, items, ..
+        } = &tree.items[0]
+        else {
+            panic!("folder expected")
+        };
+        assert_eq!(settings.auth, Auth::None);
+        let TreeItem::Request { request, .. } = &items[0] else {
+            panic!("request expected")
+        };
+        assert_eq!(request.auth, Auth::Inherit);
+        assert_eq!(request.scripts.post_response, "a;\nb;");
+        assert!(request.scripts.blocked, "imported scripts start blocked");
+        assert!(!settings.scripts.blocked, "no scripts, nothing to block");
+
+        let auth_of = |item: &TreeItem| match item {
+            TreeItem::Request { request, .. } => request.auth.clone(),
+            _ => unreachable!(),
+        };
+        assert_eq!(auth_of(&tree.items[1]), Auth::Inherit);
         assert_eq!(
             auth_of(&tree.items[2]),
             Auth::Basic {

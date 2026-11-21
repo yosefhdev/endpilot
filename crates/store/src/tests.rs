@@ -1,5 +1,5 @@
 use super::*;
-use endpilot_core::model::Auth;
+use endpilot_core::model::{Auth, Scripts, Settings};
 
 fn store() -> Store {
     Store::open_in_memory().unwrap()
@@ -45,18 +45,20 @@ fn collection_crud() {
     assert!(c2.sort > c.sort);
 
     let c = s
-        .update_collection(&c.id, Some("API v2"), Some(&[kv("base", "http://x")]))
+        .update_collection(&c.id, Some("API v2"), Some(&[kv("base", "http://x")]), None)
         .unwrap();
     assert_eq!(c.name, "API v2");
     assert_eq!(c.variables, vec![kv("base", "http://x")]);
     // Name-only update keeps variables.
-    let c = s.update_collection(&c.id, Some("API v3"), None).unwrap();
+    let c = s
+        .update_collection(&c.id, Some("API v3"), None, None)
+        .unwrap();
     assert_eq!(c.variables.len(), 1);
 
     s.delete_collection(&c.id).unwrap();
     let snap = s.snapshot().unwrap();
     assert_eq!(snap.collections.len(), 1);
-    assert!(s.update_collection(&c.id, Some("x"), None).is_err());
+    assert!(s.update_collection(&c.id, Some("x"), None, None).is_err());
 }
 
 #[test]
@@ -86,11 +88,13 @@ fn items_create_update_and_validate_parent() {
         },
         ..Default::default()
     };
-    let req = s.update_item(&req.id, Some("Create"), Some(&spec)).unwrap();
+    let req = s
+        .update_item(&req.id, Some("Create"), Some(&spec), None)
+        .unwrap();
     assert_eq!(req.name, "Create");
     assert_eq!(req.request.as_ref(), Some(&spec));
     // Folders hold no request.
-    assert!(s.update_item(&folder.id, None, Some(&spec)).is_err());
+    assert!(s.update_item(&folder.id, None, Some(&spec), None).is_err());
 }
 
 #[test]
@@ -154,7 +158,7 @@ fn duplicate_item_copies_subtree_after_original() {
 fn duplicate_collection_copies_items_and_variables() {
     let s = store();
     let c = s.create_collection("C").unwrap();
-    s.update_collection(&c.id, None, Some(&[kv("a", "1")]))
+    s.update_collection(&c.id, None, Some(&[kv("a", "1")]), None)
         .unwrap();
     let f = s
         .create_item(&c.id, None, ItemKind::Folder, "f", None)
@@ -189,7 +193,7 @@ fn delete_item_hides_subtree() {
         .unwrap();
     s.delete_item(&f.id).unwrap();
     assert!(s.snapshot().unwrap().items.is_empty());
-    assert!(s.update_item(&child.id, Some("x"), None).is_err());
+    assert!(s.update_item(&child.id, Some("x"), None, None).is_err());
     assert!(s.duplicate_item(&f.id).is_err());
 }
 
@@ -257,9 +261,19 @@ fn import_and_export_collection_tree() {
     let tree = CollectionTree {
         name: "Importada".into(),
         variables: vec![kv("base", "http://x")],
+        settings: Settings {
+            auth: Auth::Bearer {
+                token: "{{t}}".into(),
+            },
+            ..Default::default()
+        },
         items: vec![
             TreeItem::Folder {
                 name: "F".into(),
+                settings: Settings {
+                    auth: Auth::None,
+                    ..Default::default()
+                },
                 items: vec![
                     TreeItem::Request {
                         name: "a".into(),
@@ -267,6 +281,7 @@ fn import_and_export_collection_tree() {
                     },
                     TreeItem::Folder {
                         name: "vacía".into(),
+                        settings: Settings::default(),
                         items: vec![],
                     },
                 ],
@@ -281,4 +296,84 @@ fn import_and_export_collection_tree() {
     assert_eq!(c.variables, tree.variables);
     assert_eq!(s.snapshot().unwrap().items.len(), 4);
     assert_eq!(s.export_collection(&c.id).unwrap(), tree);
+}
+
+#[test]
+fn collection_and_folder_settings() {
+    let s = store();
+    let c = s.create_collection("API").unwrap();
+    assert_eq!(c.settings, Settings::default());
+    let settings = Settings {
+        auth: Auth::Bearer {
+            token: "{{token}}".into(),
+        },
+        scripts: Scripts {
+            pre_request: "console.log(1)".into(),
+            post_response: String::new(),
+            blocked: false,
+        },
+    };
+    let c = s
+        .update_collection(&c.id, None, None, Some(&settings))
+        .unwrap();
+    assert_eq!(c.settings, settings);
+
+    let folder = s
+        .create_item(&c.id, None, ItemKind::Folder, "F", None)
+        .unwrap();
+    assert_eq!(folder.settings, Some(Settings::default()));
+    let folder = s
+        .update_item(&folder.id, None, None, Some(&settings))
+        .unwrap();
+    assert_eq!(folder.settings, Some(settings.clone()));
+
+    let req = s
+        .create_item(&c.id, None, ItemKind::Request, "r", None)
+        .unwrap();
+    assert_eq!(req.settings, None);
+    assert!(s.update_item(&req.id, None, None, Some(&settings)).is_err());
+}
+
+#[test]
+fn approve_scripts_unblocks_the_whole_collection() {
+    use endpilot_core::model::{CollectionTree, TreeItem};
+    let s = store();
+    let blocked = Scripts {
+        pre_request: "x()".into(),
+        post_response: String::new(),
+        blocked: true,
+    };
+    let settings = Settings {
+        scripts: blocked.clone(),
+        ..Default::default()
+    };
+    let c = s
+        .import_collection(&CollectionTree {
+            name: "C".into(),
+            variables: vec![],
+            settings: settings.clone(),
+            items: vec![TreeItem::Folder {
+                name: "F".into(),
+                settings,
+                items: vec![TreeItem::Request {
+                    name: "r".into(),
+                    request: RequestSpec {
+                        scripts: blocked,
+                        ..Default::default()
+                    },
+                }],
+            }],
+        })
+        .unwrap();
+    s.approve_scripts(&c.id).unwrap();
+    let snap = s.snapshot().unwrap();
+    assert!(!snap.collections[0].settings.scripts.blocked);
+    for item in &snap.items {
+        let scripts = match &item.request {
+            Some(r) => &r.scripts,
+            None => &item.settings.as_ref().unwrap().scripts,
+        };
+        assert!(!scripts.blocked, "{} still blocked", item.name);
+        assert_eq!(scripts.pre_request, "x()");
+    }
 }

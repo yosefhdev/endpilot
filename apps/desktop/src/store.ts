@@ -3,19 +3,27 @@ import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { paramsFromUrl, urlWithParams } from "./lib/url";
-import { buildVars, toHttpRequest, type Vars } from "./lib/resolve";
+import { applyVarMap, toVarMap } from "./lib/scripts";
+import { buildVars, effectiveAuth, toHttpRequest, type Ancestor, type Vars } from "./lib/resolve";
 import type {
   Collection,
   Environment,
   HistoryEntry,
   HttpError,
+  HttpRequest,
   HttpResponse,
   ImportResult,
   Item,
   ItemKind,
   KeyValue,
   RequestSpec,
+  ScriptInput,
+  ScriptOutput,
+  ScriptReport,
+  ScriptVariables,
+  Settings,
   Snapshot,
+  VarMap,
 } from "./types";
 
 export function emptySpec(): RequestSpec {
@@ -28,7 +36,8 @@ export function emptySpec(): RequestSpec {
     raw: { content: "", language: "json" },
     urlencoded: [],
     formdata: [],
-    auth: { type: "none" },
+    auth: { type: "inherit" },
+    scripts: { preRequest: "", postResponse: "", blocked: false },
   };
 }
 
@@ -45,6 +54,8 @@ export interface Tab {
   error?: HttpError;
   /** Set while a request is in flight. */
   requestId?: string;
+  /** Console, tests and errors of the last send's scripts. */
+  scriptReport?: ScriptReport;
 }
 
 export const isDirty = (t: Tab) => JSON.stringify(t.draft) !== (t.saved ?? EMPTY);
@@ -72,6 +83,9 @@ interface State extends Snapshot {
   /** Tab whose "save as" dialog is open. */
   savingTabId?: string;
   loaded: boolean;
+  toast?: { id: number; kind: "success" | "error"; text: string };
+  notify: (kind: "success" | "error", text: string) => void;
+  dismissToast: () => void;
 
   load: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -96,11 +110,19 @@ interface State extends Snapshot {
   ) => Promise<void>;
   setSavingTab: (id?: string) => void;
   varsFor: (tab: Tab) => Vars;
+  /** The request ready to send: variables resolved, inherited auth applied. */
+  httpRequestFor: (tab: Tab) => HttpRequest;
+  /** Saves `name = value` where the variable resolves from (or the best scope if undefined). */
+  setVar: (itemId: string | undefined, name: string, value: string) => Promise<void>;
 
   // collections and items
   createCollection: (name: string) => Promise<Collection>;
   renameCollection: (id: string, name: string) => Promise<void>;
   setCollectionVariables: (id: string, variables: KeyValue[]) => Promise<void>;
+  setCollectionSettings: (id: string, settings: Settings, variables?: KeyValue[]) => Promise<void>;
+  setFolderSettings: (id: string, settings: Settings) => Promise<void>;
+  /** Lets every imported script of the collection run (after the user reviewed them). */
+  approveScripts: (collectionId: string) => Promise<void>;
   duplicateCollection: (id: string) => Promise<void>;
   deleteCollection: (id: string) => Promise<void>;
   createItem: (
@@ -145,6 +167,111 @@ function varsOf(s: Snapshot, itemId?: string): Vars {
   return buildVars(s.globals, collectionVars, envVars);
 }
 
+export type VarScope =
+  | { kind: "environment"; id: string; label: string }
+  | { kind: "collection"; id: string; label: string }
+  | { kind: "globals"; label: string };
+
+const defines = (rows: KeyValue[], name: string) =>
+  rows.some((v) => v.enabled && v.key.trim() === name);
+
+/** Scope a variable resolves from; for an undefined one, where it would be added (same priority). */
+export function varScope(s: Snapshot, itemId: string | undefined, name: string): VarScope {
+  const env = s.environments.find((e) => e.id === s.activeEnvironmentId);
+  const collectionId = s.items.find((i) => i.id === itemId)?.collectionId;
+  const col = s.collections.find((c) => c.id === collectionId);
+  const toEnv = env && { kind: "environment" as const, id: env.id, label: `Entorno: ${env.name}` };
+  const toCol = col && { kind: "collection" as const, id: col.id, label: `Colección: ${col.name}` };
+  const globals = { kind: "globals" as const, label: "Globales" };
+  if (env && defines(env.variables, name)) return toEnv!;
+  if (col && defines(col.variables, name)) return toCol!;
+  if (defines(s.globals, name)) return globals;
+  return toEnv ?? toCol ?? globals;
+}
+
+/** Sets the enabled `name` row, or appends one. */
+const withVar = (rows: KeyValue[], name: string, value: string): KeyValue[] =>
+  defines(rows, name)
+    ? rows.map((v) => (v.enabled && v.key.trim() === name ? { ...v, value } : v))
+    : [...rows, { key: name, value, enabled: true }];
+
+/** Collection, then folders down to `parentId` (what a child inherits from). */
+export function ancestorsOf(
+  s: Pick<Snapshot, "collections" | "items">,
+  collectionId: string | undefined,
+  parentId: string | null | undefined,
+): Ancestor[] {
+  const collection = s.collections.find((c) => c.id === collectionId);
+  if (!collection) return [];
+  const folders: Ancestor[] = [];
+  for (let id = parentId; id;) {
+    const folder = s.items.find((i) => i.id === id);
+    if (!folder) break;
+    folders.unshift({
+      kind: "folder",
+      name: folder.name,
+      settings: folder.settings ?? collection.settings,
+    });
+    id = folder.parentId;
+  }
+  return [{ kind: "collection", name: collection.name, settings: collection.settings }, ...folders];
+}
+
+/** Ancestors of a saved request; none for an unsaved tab. */
+export function ancestorsOfItem(s: Pick<Snapshot, "collections" | "items">, itemId?: string) {
+  const item = s.items.find((i) => i.id === itemId);
+  return item ? ancestorsOf(s, item.collectionId, item.parentId) : [];
+}
+
+/** Scripts of a phase, collection first, then folders, then the request (Postman's order). */
+function scriptChain(
+  ancestors: Ancestor[],
+  spec: RequestSpec,
+  phase: "preRequest" | "postResponse",
+) {
+  const all = [
+    ...ancestors.map((a) => ({
+      source: `${a.kind === "collection" ? "Colección" : "Carpeta"} ${a.name}`,
+      scripts: a.settings.scripts,
+    })),
+    { source: "Request", scripts: spec.scripts },
+  ]
+    .map((s) => ({ ...s, code: s.scripts[phase] }))
+    .filter((s) => s.code.trim());
+  return {
+    run: all.filter((s) => !s.scripts.blocked).map(({ source, code }) => ({ source, code })),
+    // Imported scripts the user has not reviewed: never run.
+    skipped: all.filter((s) => s.scripts.blocked).map((s) => s.source),
+  };
+}
+
+/** Variables as scripts see them, per scope. */
+function scriptVars(s: Snapshot, itemId: string | undefined, local: VarMap = {}): ScriptVariables {
+  const collectionId = s.items.find((i) => i.id === itemId)?.collectionId;
+  const env = s.environments.find((e) => e.id === s.activeEnvironmentId);
+  return {
+    globals: toVarMap(s.globals),
+    collection: toVarMap(s.collections.find((c) => c.id === collectionId)?.variables ?? []),
+    environment: env ? toVarMap(env.variables) : null,
+    local,
+  };
+}
+
+/** Imported script sets of a collection the user has not reviewed (they do not run). */
+export function blockedScriptCount(
+  s: Pick<Snapshot, "collections" | "items">,
+  collectionId: string,
+) {
+  const sets = [
+    s.collections.find((c) => c.id === collectionId)?.settings.scripts,
+    ...s.items
+      .filter((i) => i.collectionId === collectionId)
+      .map((i) => i.request?.scripts ?? i.settings?.scripts),
+  ];
+  return sets.filter((sc) => sc?.blocked && (sc.preRequest.trim() || sc.postResponse.trim()))
+    .length;
+}
+
 /** Safe file name from a user-given name. */
 const fileName = (name: string) => name.replace(/[\\/:*?"<>|]+/g, "_").trim() || "export";
 
@@ -160,6 +287,32 @@ export const useStore = create<State>((set, get) => {
     const out = await invoke<T>(cmd, args);
     await get().refresh();
     return out;
+  };
+
+  /** Writes back the variables a script changed (only the scopes that changed). */
+  const saveScriptVars = async (
+    itemId: string | undefined,
+    before: ScriptVariables,
+    after: ScriptVariables,
+  ) => {
+    const s = get();
+    const env = s.environments.find((e) => e.id === s.activeEnvironmentId);
+    const collectionId = s.items.find((i) => i.id === itemId)?.collectionId;
+    const collection = s.collections.find((c) => c.id === collectionId);
+    const envRows =
+      env && before.environment && after.environment
+        ? applyVarMap(env.variables, before.environment, after.environment)
+        : null;
+    const collectionRows = collection
+      ? applyVarMap(collection.variables, before.collection, after.collection)
+      : null;
+    const globalRows = applyVarMap(s.globals, before.globals, after.globals);
+    if (env && envRows)
+      await invoke("update_environment", { id: env.id, name: env.name, variables: envRows });
+    if (collection && collectionRows)
+      await invoke("update_collection", { id: collection.id, variables: collectionRows });
+    if (globalRows) await invoke("set_globals", { variables: globalRows });
+    if (envRows || collectionRows || globalRows) await get().refresh();
   };
 
   /** cURL opens in a tab; anything else was saved, so reload. */
@@ -179,6 +332,9 @@ export const useStore = create<State>((set, get) => {
     activeEnvironmentId: null,
     history: [],
     loaded: false,
+
+    notify: (kind, text) => set({ toast: { id: Date.now(), kind, text } }),
+    dismissToast: () => set({ toast: undefined }),
 
     load: async () => {
       const [snap, history] = await Promise.all([
@@ -268,6 +424,25 @@ export const useStore = create<State>((set, get) => {
 
     varsFor: (tab) => varsOf(get(), tab.itemId),
 
+    httpRequestFor: (tab) => {
+      const { auth } = effectiveAuth(tab.draft.auth, ancestorsOfItem(get(), tab.itemId));
+      return toHttpRequest(tab.draft, get().varsFor(tab), auth);
+    },
+
+    setVar: async (itemId, name, value) => {
+      const s = get();
+      const scope = varScope(s, itemId, name);
+      if (scope.kind === "environment") {
+        const env = s.environments.find((e) => e.id === scope.id)!;
+        await s.updateEnvironment(env.id, env.name, withVar(env.variables, name, value));
+      } else if (scope.kind === "collection") {
+        const col = s.collections.find((c) => c.id === scope.id)!;
+        await s.setCollectionVariables(col.id, withVar(col.variables, name, value));
+      } else {
+        await s.setGlobals(withVar(s.globals, name, value));
+      }
+    },
+
     send: async (id) => {
       const tab = get().tabs.find((t) => t.id === id);
       if (!tab || tab.requestId) return;
@@ -276,14 +451,79 @@ export const useStore = create<State>((set, get) => {
       // Only apply the result if this tab still waits for this request (it may be closed or re-sent).
       const settle = (fn: (t: Tab) => Tab) =>
         patchTab(id, (t) => (t.requestId === requestId ? { ...fn(t), requestId: undefined } : t));
+      const report: ScriptReport = { logs: [], tests: [], errors: [] };
+      const ancestors = ancestorsOfItem(get(), tab.itemId);
+      let draft = tab.draft;
+      let local: VarMap = {};
+
+      /** Runs a phase's scripts and saves the variables they changed. */
+      const runPhase = async (
+        phase: "preRequest" | "postResponse",
+        response: ScriptInput["response"],
+      ) => {
+        const { run: scripts, skipped } = scriptChain(ancestors, draft, phase);
+        if (skipped.length)
+          report.logs.push({
+            level: "warn",
+            text: `No se ejecutaron scripts importados sin revisar (${skipped.join(", ")}). Revísalos y actívalos en su pestaña Scripts.`,
+          });
+        if (!scripts.length) return;
+        const variables = scriptVars(get(), tab.itemId, local);
+        const out = await invoke<ScriptOutput>("run_scripts", {
+          input: {
+            scripts,
+            variables,
+            request: { method: draft.method, url: draft.url, headers: draft.headers },
+            response,
+          } satisfies ScriptInput,
+        });
+        report.logs.push(...out.logs);
+        report.tests.push(...out.tests);
+        report.errors.push(...out.errors);
+        local = out.variables.local;
+        await saveScriptVars(tab.itemId, variables, out.variables);
+        return out;
+      };
+
       const started = performance.now();
       let entry: Omit<HistoryEntry, "id" | "createdAt">;
       try {
+        const pre = await runPhase("preRequest", null);
+        if (pre) {
+          const { method, url, headers } = pre.request;
+          draft = { ...draft, method, url, headers };
+        }
+        if (report.errors.length) {
+          // Like Postman: a failing pre-request script does not send the request.
+          settle((t) => ({
+            ...t,
+            response: undefined,
+            scriptReport: report,
+            error: {
+              kind: "other",
+              message: `Error en el script pre-request: ${report.errors[0]}`,
+            },
+          }));
+          return;
+        }
+        const { auth } = effectiveAuth(draft.auth, ancestors);
+        const vars = new Map([...get().varsFor(tab), ...Object.entries(local)]);
         const response = await invoke<HttpResponse>("send_request", {
           id: requestId,
-          request: toHttpRequest(tab.draft, get().varsFor(tab)),
+          request: toHttpRequest(draft, vars, auth),
         });
-        settle((t) => ({ ...t, response, error: undefined }));
+        try {
+          await runPhase("postResponse", {
+            code: response.status,
+            status: response.statusText,
+            headers: response.headers,
+            body: response.bodyIsBase64 ? "" : response.body,
+            responseTime: response.timings.totalMs,
+          });
+        } catch (e) {
+          report.errors.push(errorText(e));
+        }
+        settle((t) => ({ ...t, response, error: undefined, scriptReport: report }));
         entry = {
           request: tab.draft,
           status: response.status,
@@ -293,7 +533,7 @@ export const useStore = create<State>((set, get) => {
         };
       } catch (e) {
         const error = asHttpError(e);
-        settle((t) => ({ ...t, error }));
+        settle((t) => ({ ...t, error, scriptReport: report }));
         if (error.kind === "cancelled") return;
         entry = {
           request: tab.draft,
@@ -347,6 +587,25 @@ export const useStore = create<State>((set, get) => {
     createCollection: (name) => mutate("create_collection", { name }),
     renameCollection: (id, name) => mutate("update_collection", { id, name }),
     setCollectionVariables: (id, variables) => mutate("update_collection", { id, variables }),
+    setCollectionSettings: (id, settings, variables) =>
+      mutate("update_collection", { id, settings, variables }),
+    setFolderSettings: (id, settings) => mutate("update_item", { id, settings }),
+    approveScripts: async (collectionId) => {
+      await mutate("approve_scripts", { collectionId });
+      // Open tabs of that collection hold their own copy of the request.
+      const { items } = get();
+      set((s) => ({
+        tabs: s.tabs.map((t) => {
+          const item = items.find((i) => i.id === t.itemId);
+          if (item?.collectionId !== collectionId || !item.request) return t;
+          return {
+            ...t,
+            draft: { ...t.draft, scripts: { ...t.draft.scripts, blocked: false } },
+            saved: JSON.stringify(item.request),
+          };
+        }),
+      }));
+    },
     duplicateCollection: (id) => mutate("duplicate_collection", { id }),
     deleteCollection: (id) => mutate("delete_collection", { id }),
     createItem: (collectionId, parentId, kind, name) =>

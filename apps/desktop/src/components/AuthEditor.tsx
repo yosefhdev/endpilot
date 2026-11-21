@@ -3,6 +3,7 @@ import type { Auth, AuthType } from "../types";
 import { VarInput } from "./VarInput";
 
 const TYPES: { id: AuthType; label: string }[] = [
+  { id: "inherit", label: "Heredar del padre" },
   { id: "none", label: "Sin auth" },
   { id: "bearer", label: "Bearer token" },
   { id: "basic", label: "Basic auth" },
@@ -10,6 +11,7 @@ const TYPES: { id: AuthType; label: string }[] = [
 ];
 
 const DEFAULTS: Record<AuthType, Auth> = {
+  inherit: { type: "inherit" },
   none: { type: "none" },
   bearer: { type: "bearer", token: "" },
   basic: { type: "basic", username: "", password: "" },
@@ -28,7 +30,19 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function AuthEditor({ auth, onChange }: { auth: Auth; onChange: (auth: Auth) => void }) {
+type Props = {
+  auth: Auth;
+  onChange: (auth: Auth) => void;
+  /** What "inherit" resolves to; omit where there is no parent (a collection). */
+  inherited?: { auth: Auth; from?: string };
+};
+
+const labelOf = (type: AuthType) => TYPES.find((t) => t.id === type)?.label;
+
+export function AuthEditor({ auth: value, onChange, inherited }: Props) {
+  // A collection has no parent: its "inherit" is just no auth.
+  const auth: Auth = !inherited && value.type === "inherit" ? { type: "none" } : value;
+  const types = inherited ? TYPES : TYPES.filter((t) => t.id !== "inherit");
   return (
     <div className="flex max-w-xl flex-col gap-3 py-1">
       <Field label="Tipo">
@@ -37,16 +51,26 @@ export function AuthEditor({ auth, onChange }: { auth: Auth; onChange: (auth: Au
           onChange={(e) => onChange(DEFAULTS[e.target.value as AuthType])}
           className="h-8 w-52 rounded border border-line-strong bg-surface px-2 text-[13px]"
         >
-          {TYPES.map((t) => (
+          {types.map((t) => (
             <option key={t.id} value={t.id}>
               {t.label}
             </option>
           ))}
         </select>
       </Field>
-      {auth.type === "none" && (
-        <p className="text-[13px] text-muted">Este request no envía autenticación.</p>
+      {auth.type === "inherit" && inherited && (
+        <p className="text-[13px] text-muted">
+          {inherited.from ? (
+            <>
+              Usa la auth de <span className="text-fg">{inherited.from}</span>:{" "}
+              <span className="text-fg">{labelOf(inherited.auth.type)}</span>.
+            </>
+          ) : (
+            "Guarda el request en una colección para heredar su auth. Por ahora no envía ninguna."
+          )}
+        </p>
       )}
+      {auth.type === "none" && <p className="text-[13px] text-muted">No envía autenticación.</p>}
       {auth.type === "bearer" && (
         <Field label="Token">
           <VarInput
@@ -105,7 +129,7 @@ export function AuthEditor({ auth, onChange }: { auth: Auth; onChange: (auth: Au
           </Field>
         </>
       )}
-      {auth.type !== "none" && (
+      {auth.type !== "none" && auth.type !== "inherit" && (
         <p className="text-xs text-muted">
           Se agrega al enviar. Un header escrito a mano en Headers tiene prioridad.
         </p>

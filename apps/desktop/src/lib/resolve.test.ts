@@ -1,6 +1,8 @@
 /// <reference types="bun" />
 import { describe, expect, test } from "bun:test";
 import {
+  effectiveAuth,
+  varSegments,
   buildVars,
   insertVar,
   resolveText,
@@ -22,6 +24,7 @@ const spec = (patch: Partial<RequestSpec> = {}): RequestSpec => ({
   urlencoded: [],
   formdata: [],
   auth: { type: "none" },
+  scripts: { preRequest: "", postResponse: "", blocked: false },
   ...patch,
 });
 
@@ -122,5 +125,57 @@ describe("toHttpRequest", () => {
       mode: "formdata",
       fields: [{ ...kv("name", "ana"), kind: "text" }],
     });
+  });
+});
+
+describe("varSegments", () => {
+  test("splits plain text and variables with offsets", () => {
+    expect(varSegments("{{base}}/u/{{ id }}?x")).toEqual([
+      { text: "{{base}}", start: 0, name: "base" },
+      { text: "/u/", start: 8 },
+      { text: "{{ id }}", start: 11, name: "id" },
+      { text: "?x", start: 19 },
+    ]);
+  });
+});
+
+describe("auth inheritance", () => {
+  const settings = (auth: Auth) => ({
+    auth,
+    scripts: { preRequest: "", postResponse: "", blocked: false },
+  });
+  const bearer: Auth = { type: "bearer", token: "{{token}}" };
+  const chain = [
+    { kind: "collection" as const, name: "API", settings: settings(bearer) },
+    { kind: "folder" as const, name: "Admin", settings: settings({ type: "inherit" }) },
+  ];
+
+  test("walks up to the nearest ancestor with its own auth", () => {
+    expect(effectiveAuth({ type: "inherit" }, chain)).toEqual({
+      auth: bearer,
+      from: 'la colección "API"',
+    });
+    const nested = [
+      ...chain,
+      { kind: "folder" as const, name: "Público", settings: settings({ type: "none" }) },
+    ];
+    expect(effectiveAuth({ type: "inherit" }, nested)).toEqual({
+      auth: { type: "none" },
+      from: 'la carpeta "Público"',
+    });
+  });
+
+  test("own auth wins; inherit everywhere means none", () => {
+    expect(effectiveAuth({ type: "none" }, chain)).toEqual({ auth: { type: "none" } });
+    expect(effectiveAuth({ type: "inherit" }, [])).toEqual({ auth: { type: "none" } });
+  });
+
+  test("toHttpRequest applies the inherited auth", () => {
+    const req = toHttpRequest(
+      spec({ auth: { type: "inherit" } }),
+      buildVars([kv("base", "http://x"), kv("token", "t0k")]),
+      bearer,
+    );
+    expect(req.headers).toContainEqual(kv("Authorization", "Bearer t0k"));
   });
 });

@@ -1,10 +1,20 @@
 import { useState, type DragEvent } from "react";
-import { ChevronRight, Folder, FolderOpen, Import, Layers, Plus } from "lucide-react";
-import { errorText, useStore } from "../store";
+import {
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  Import,
+  Layers,
+  Plus,
+  Settings2,
+  ShieldAlert,
+} from "lucide-react";
+import { ancestorsOf, blockedScriptCount, errorText, useStore } from "../store";
+import { effectiveAuth } from "../lib/resolve";
 import { methodColor } from "../lib/styles";
 import type { Collection, Item } from "../types";
 import { confirmDelete } from "../lib/confirm";
-import { ImportDialog, VariablesDialog } from "./Dialogs";
+import { ImportDialog, SettingsDialog } from "./Dialogs";
 import { MenuButton } from "./ui";
 
 type Drop = { id: string; where: "before" | "after" | "inside" };
@@ -37,7 +47,8 @@ export function CollectionTree() {
   const activeItemId = useStore((st) => st.tabs.find((t) => t.id === st.activeId)?.itemId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<string>();
-  const [varsOf, setVarsOf] = useState<Collection>();
+  // Id of the collection or folder whose settings are open.
+  const [settingsOf, setSettingsOf] = useState<string>();
   const [importing, setImporting] = useState(false);
   const [dragId, setDragId] = useState<string>();
   const [drop, setDrop] = useState<Drop>();
@@ -189,6 +200,7 @@ export function CollectionTree() {
                       label: "Nueva carpeta",
                       onSelect: () => newItem(item.collectionId, item.id, "folder").catch(report),
                     },
+                    { label: "Ajustes (auth, scripts)…", onSelect: () => setSettingsOf(item.id) },
                   ]
                 : []),
               { label: "Renombrar", onSelect: () => setEditing(item.id) },
@@ -287,6 +299,26 @@ export function CollectionTree() {
                   ) : (
                     <span className="min-w-0 flex-1 truncate">{c.name}</span>
                   )}
+                  {blockedScriptCount(s, c.id) > 0 && (
+                    <ShieldAlert
+                      className="size-3.5 shrink-0 text-warn"
+                      aria-label="Scripts importados sin revisar"
+                    >
+                      <title>Scripts importados sin revisar: abre los ajustes</title>
+                    </ShieldAlert>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSettingsOf(c.id);
+                    }}
+                    aria-label={`Ajustes de ${c.name}`}
+                    title="Variables, auth y scripts"
+                    className="rounded p-1 text-muted opacity-0 group-hover:opacity-100 hover:bg-raised hover:text-fg focus-visible:opacity-100"
+                  >
+                    <Settings2 className="size-3.5" aria-hidden />
+                  </button>
                   <MenuButton
                     label={`Acciones de ${c.name}`}
                     className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100"
@@ -299,7 +331,10 @@ export function CollectionTree() {
                         label: "Nueva carpeta",
                         onSelect: () => newItem(c.id, null, "folder").catch(report),
                       },
-                      { label: "Variables", onSelect: () => setVarsOf(c) },
+                      {
+                        label: "Ajustes (variables, auth, scripts)…",
+                        onSelect: () => setSettingsOf(c.id),
+                      },
                       { label: "Renombrar", onSelect: () => setEditing(c.id) },
                       {
                         label: "Duplicar",
@@ -342,14 +377,39 @@ export function CollectionTree() {
         </ul>
       )}
       {importing && <ImportDialog onClose={() => setImporting(false)} />}
-      {varsOf && (
-        <VariablesDialog
-          title={`Variables de "${varsOf.name}"`}
-          variables={varsOf.variables}
-          onSave={(_, variables) => s.setCollectionVariables(varsOf.id, variables)}
-          onClose={() => setVarsOf(undefined)}
-        />
-      )}
+      {settingsOf && <Settings id={settingsOf} onClose={() => setSettingsOf(undefined)} />}
     </div>
+  );
+}
+
+/** Settings dialog for a collection (with its variables) or a folder (with what it inherits). */
+function Settings({ id, onClose }: { id: string; onClose: () => void }) {
+  const s = useStore();
+  const collection = s.collections.find((c) => c.id === id);
+  if (collection)
+    return (
+      <SettingsDialog
+        title={`Ajustes de la colección "${collection.name}"`}
+        settings={collection.settings}
+        variables={collection.variables}
+        blockedCount={blockedScriptCount(s, id)}
+        onApproveAll={() => s.approveScripts(id)}
+        onSave={(settings, variables) => s.setCollectionSettings(id, settings, variables)}
+        onClose={onClose}
+      />
+    );
+  const folder = s.items.find((i) => i.id === id);
+  if (!folder?.settings) return null;
+  return (
+    <SettingsDialog
+      title={`Ajustes de la carpeta "${folder.name}"`}
+      settings={folder.settings}
+      inherited={effectiveAuth(
+        { type: "inherit" },
+        ancestorsOf(s, folder.collectionId, folder.parentId),
+      )}
+      onSave={(settings) => s.setFolderSettings(id, settings)}
+      onClose={onClose}
+    />
   );
 }
