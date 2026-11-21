@@ -209,10 +209,12 @@ docker compose -f deploy/docker-compose.yml up -d
 - [x] Scripts pre-request y post-response en QuickJS con `pm.*` esencial, tests y consola. Adelantado desde la Fase 7.
 
 ### Fase 4: Servidor y cuentas (2-3 semanas)
-- [ ] API Axum con migraciones, errores uniformes y documentación (OpenAPI).
-- [ ] Registro, login, refresh tokens, sesiones por dispositivo y cierre remoto.
+- [x] API Axum con migraciones (sqlx) y errores uniformes.
+- [ ] Documentación de la API (OpenAPI).
+- [x] Registro, login, refresh tokens, sesiones por dispositivo y cierre remoto.
+- [ ] Límite de intentos de login (fuerza bruta) y opción para cerrar el registro público.
 - [ ] Recuperación de contraseña y OAuth (Google/GitHub); 2FA opcional.
-- [ ] Workspaces (crear, listar, renombrar, borrar).
+- [x] Workspaces (crear, listar, renombrar, borrar).
 - [ ] Inicio de sesión en el cliente y descarga de los workspaces del usuario.
 - **Entregable:** iniciar sesión desde otra computadora y ver tus workspaces.
 

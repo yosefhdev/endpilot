@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Estado actual
 
-**Fase 3 completada** (requests con pestañas; colecciones, entornos, variables, auth e historial en SQLite local; importar/exportar Postman, importar OpenAPI y cURL, generar código; herencia de auth, ajustes de colección/carpeta y scripts pre/post con `pm.*`). La API solo tiene `GET /health`. Siguiente: **Fase 4** (servidor y cuentas). `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
+**Fase 3 completada** (requests con pestañas; colecciones, entornos, variables, auth e historial en SQLite local; importar/exportar Postman, importar OpenAPI y cURL, generar código; herencia de auth, ajustes de colección/carpeta y scripts pre/post con `pm.*`). **Fase 4 en curso:** la API ya tiene cuentas (registro, login, refresh rotativo, sesiones por dispositivo) y CRUD de workspaces sobre Postgres; falta el login en el cliente, OpenAPI, recuperación de contraseña, OAuth, 2FA y límite de intentos. `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
 
 ## Comandos
 
@@ -14,6 +14,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo test -p endpilot-http errors_are_classified   # un solo test: -p <crate> <filtro>
+cargo test -p endpilot-server   # necesita Postgres: docker compose -f deploy/docker-compose.dev.yml up -d postgres
 
 # Frontend (en apps/desktop). Solo bun: nunca npm/pnpm/yarn; el lockfile es bun.lock
 bun run tauri dev        # app de escritorio con recarga
@@ -27,7 +28,8 @@ docker compose -f deploy/docker-compose.dev.yml watch   # reconstruye api al cam
 
 - Cualquier `cargo` que compile `endpilot-desktop` falla si no existe `apps/desktop/dist` (`tauri::generate_context!` lo exige): corre `bun run build` antes. CI hace lo mismo.
 - El Dockerfile del server usa la raíz como contexto y compila solo `-p endpilot-server`; `Cargo.lock` debe estar al día (`--locked`).
-- Postgres se expone en el host en 5433 porque en esta máquina hay un Postgres local en 5432.
+- Postgres se expone en el host en 5433 porque en esta máquina hay un Postgres local en 5432. `.cargo/config.toml` apunta `DATABASE_URL` ahí con `127.0.0.1` (con `localhost`, Windows prueba IPv6 primero y cada conexión tarda segundos). CI levanta su propio Postgres y define `DATABASE_URL`.
+- Rust ≥ 1.94 (lo exige sqlx 0.9). sqlx 0.8 no sirve: choca con `rusqlite` por la librería nativa de sqlite (`links`).
 - Lints de workspace: `unsafe_code = forbid`, clippy `all` en warn (CI con `-D warnings`). Cada crate nuevo necesita `[lints] workspace = true` y heredar `version/edition/license` del workspace.
 
 ## Qué es
@@ -61,6 +63,13 @@ Alternativa de escritorio a Postman, autohospedada, local-first, con sync en tie
 - Confirmaciones con `ask` de `@tauri-apps/plugin-dialog` (requiere el permiso `dialog:allow-message`; abrir/guardar archivos, `dialog:allow-open`/`allow-save`).
 
 - Los atajos (Ctrl+Enter, Ctrl+S, Ctrl+T, Ctrl+W) se registran en fase de captura en `App.tsx` para ganarle al keymap de CodeMirror.
+
+### Servidor (Fase 4, implementado en parte)
+
+- `server/src`: `auth.rs` (cuentas y sesiones), `workspaces.rs`, `error.rs` (todas las respuestas de error son `{"error": {"code", "message"}}`; `code` es estable para el cliente). Migraciones en `server/migrations/`, se aplican al arrancar (`sqlx::migrate!`).
+- SQL con `sqlx::query`/`query_as` en tiempo de ejecución, no las macros `query!` (no exigen base al compilar). sqlx 0.9 rechaza SQL armado con `format!`: usa literales (ver la macro `select!` en `workspaces.rs`).
+- Sesiones: JWT HS256 de 15 min (`sub` = usuario, `sid` = sesión) + refresh token aleatorio guardado como SHA-256 y rotado en cada uso. Cada request revisa que la sesión no esté revocada (cierre remoto inmediato). Reusar un refresh ya rotado revoca la sesión. El cliente debe refrescar de uno en uno.
+- Config: `DATABASE_URL`, `JWT_SECRET` (≥ 32 caracteres), `API_ADDR`. Tests: `#[sqlx::test]` crea una base nueva por test.
 
 ### Sincronización (la parte delicada)
 

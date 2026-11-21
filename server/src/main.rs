@@ -1,9 +1,31 @@
 use axum::{Json, Router, routing::get};
 use endpilot_core::Health;
+use sqlx::PgPool;
+use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
-fn app() -> Router {
-    Router::new().route("/health", get(|| async { Json(Health::ok()) }))
+mod auth;
+mod error;
+#[cfg(test)]
+mod tests;
+mod workspaces;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: PgPool,
+    pub keys: Arc<auth::Keys>,
+}
+
+fn app(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(|| async { Json(Health::ok()) }))
+        .merge(auth::routes())
+        .merge(workspaces::routes())
+        .with_state(state)
+}
+
+fn env(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("falta la variable de entorno {name}"))
 }
 
 #[tokio::main]
@@ -12,37 +34,30 @@ async fn main() {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
+    let secret = env("JWT_SECRET");
+    assert!(
+        secret.len() >= 32,
+        "JWT_SECRET debe tener al menos 32 caracteres"
+    );
+    let db = PgPool::connect(&env("DATABASE_URL"))
+        .await
+        .expect("cannot connect to Postgres");
+    sqlx::migrate!().run(&db).await.expect("migrations failed");
+    let state = AppState {
+        db,
+        keys: Arc::new(auth::Keys::new(secret.as_bytes())),
+    };
+
     let addr = std::env::var("API_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("cannot bind {addr}: {e}"));
     tracing::info!("listening on {addr}");
 
-    axum::serve(listener, app())
+    axum::serve(listener, app(state))
         .with_graceful_shutdown(async {
             tokio::signal::ctrl_c().await.ok();
         })
         .await
         .expect("server error");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-    use axum::http::{Request, StatusCode};
-    use http_body_util::BodyExt;
-    use tower::ServiceExt;
-
-    #[tokio::test]
-    async fn health_returns_ok() {
-        let res = app()
-            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = res.into_body().collect().await.unwrap().to_bytes();
-        let health: Health = serde_json::from_slice(&body).unwrap();
-        assert_eq!(health, Health::ok());
-    }
 }

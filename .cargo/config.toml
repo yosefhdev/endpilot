@@ -1,0 +1,4 @@
+# Default for local runs: the dev Postgres from deploy/docker-compose.dev.yml.
+# A DATABASE_URL already in the environment (CI) wins.
+[env]
+DATABASE_URL = "postgres://endpilot:endpilot@127.0.0.1:5433/endpilot"

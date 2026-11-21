@@ -17,6 +17,20 @@ jobs:
     # 24.04 is the image Tauri documents; ubuntu-latest (26.04) hung for 10+ min in apt.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Server tests (sqlx::test) create a throwaway database per test here.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: endpilot
+          POSTGRES_PASSWORD: endpilot
+          POSTGRES_DB: endpilot
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U endpilot"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgres://endpilot:endpilot@localhost:5432/endpilot
     steps:
       - uses: actions/checkout@v5
         with:

@@ -12,6 +12,8 @@ services:
       RUST_LOG: ${RUST_LOG:-debug}
       DATABASE_URL: postgres://${POSTGRES_USER:-endpilot}:${POSTGRES_PASSWORD:-endpilot}@postgres:5432/${POSTGRES_DB:-endpilot}
       REDIS_URL: redis://redis:6379
+      # Dev only. Production reads it from deploy/.env.
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-0123456789abcdef}
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }

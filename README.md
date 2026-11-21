@@ -2,11 +2,11 @@
 
 Cliente de APIs de escritorio, autohospedado y colaborativo. Alternativa local-first a Postman, compatible con sus colecciones. Nombre provisional.
 
-Estado: **Fase 1** (envío de requests; sin persistencia todavía). El plan completo está en [PLAN.md](PLAN.md).
+Estado: **Fase 4 en curso** (la app funciona sola en local; el servidor ya tiene cuentas y workspaces, aún sin conexión desde la app). El plan completo está en [PLAN.md](PLAN.md).
 
 ## Requisitos
 
-- Rust estable (edition 2024) y [Bun](https://bun.sh) 1.3+ (no usar npm)
+- Rust 1.94+ (edition 2024) y [Bun](https://bun.sh) 1.3+ (no usar npm)
 - Windows: WebView2 y Visual Studio Build Tools (C++)
 - Linux: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
 - Docker + Compose (backend)
@@ -29,7 +29,7 @@ curl http://localhost/health
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo test --workspace   # los tests del servidor necesitan el Postgres de dev levantado
 cd apps/desktop && bun run lint && bun test && bun run format:check && bun run build
 ```
 
@@ -43,9 +43,26 @@ crates/core/    Tipos compartidos entre cliente y servidor
 crates/http/    Motor HTTP (reqwest) que ejecuta los requests
 crates/store/   Base local SQLite (colecciones, entornos, historial)
 crates/postman-compat/  Importar/exportar Postman, importar OpenAPI 3 y cURL
-server/         API Axum + Dockerfile
+crates/script-sandbox/  Scripts pm.* en QuickJS aislado
+server/         API Axum (cuentas, sesiones, workspaces), migraciones y Dockerfile
 deploy/         Compose, Caddyfile, .env.example
 ```
+
+## API del servidor
+
+Errores: `{"error": {"code": "...", "message": "..."}}`. Las rutas con 🔒 piden `Authorization: Bearer <accessToken>`.
+
+| Ruta | Qué hace |
+|---|---|
+| `POST /auth/register` | `{email, name, password, deviceName}` → tokens. Crea el workspace "Personal". |
+| `POST /auth/login` | `{email, password, deviceName}` → tokens (una sesión por dispositivo) |
+| `POST /auth/refresh` | `{refreshToken}` → tokens nuevos; el refresh anterior deja de servir |
+| `POST /auth/logout` 🔒 | Cierra la sesión actual |
+| `GET /me` 🔒 | Usuario actual |
+| `GET /sessions` 🔒, `DELETE /sessions/{id}` 🔒 | Dispositivos con sesión; cerrar uno a distancia |
+| `GET/POST /workspaces` 🔒, `PATCH/DELETE /workspaces/{id}` 🔒 | Listar, crear (`{name}`), renombrar (owner/admin), borrar (owner; el personal no) |
+
+El access token dura 15 min. El refresh token rota en cada uso; si se reutiliza uno viejo, la sesión se revoca.
 
 ## Compatibilidad con Postman
 
