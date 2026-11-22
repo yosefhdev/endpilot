@@ -11,8 +11,8 @@ use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequestParts, Path, State};
-use axum::http::StatusCode;
 use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode};
 use axum::{Json, Router, routing};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -29,6 +29,15 @@ use crate::error::{ApiError, ApiResult};
 const ACCESS_TTL_SECS: i64 = 15 * 60;
 /// A device that doesn't refresh for this long has to sign in again.
 const REFRESH_IDLE_DAYS: i32 = 30;
+
+/// Failed logins allowed in the window: one email from one IP, one email from
+/// anywhere (spoofed IPs), one IP across emails (credential stuffing).
+const FAILED_LOGINS_PER_EMAIL_IP: i64 = 5;
+const FAILED_LOGINS_PER_EMAIL: i64 = 20;
+const FAILED_LOGINS_PER_IP: i64 = 50;
+const FAILED_LOGIN_WINDOW_MINS: i32 = 15;
+/// Sign-ups hash a password each, so they are rate limited too.
+const REGISTRATIONS_PER_IP_PER_HOUR: i64 = 10;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -254,11 +263,76 @@ async fn start_session(
     tokens(state, user, session_id, refresh)
 }
 
+/// Client address as Caddy reports it. Caddy replaces any X-Forwarded-For the
+/// client sent, so the last entry is the real one.
+/// shortcut: spoofable if the API port is reachable without Caddy; the per-email limits still apply.
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .map(|ip| ip.trim().to_owned())
+        .filter(|ip| !ip.is_empty())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+async fn record_attempt(state: &AppState, kind: &str, email: &str, ip: &str) -> ApiResult<()> {
+    sqlx::query("INSERT INTO auth_attempts (kind, email, ip) VALUES ($1, lower($2), $3)")
+        .bind(kind)
+        .bind(email)
+        .bind(ip)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM auth_attempts WHERE attempted_at < now() - interval '1 day'")
+        .execute(&state.db)
+        .await?;
+    Ok(())
+}
+
+async fn check_login_attempts(state: &AppState, email: &str, ip: &str) -> ApiResult<()> {
+    let (email_ip, by_email, by_ip): (i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE email = lower($1) AND ip = $2),
+                count(*) FILTER (WHERE email = lower($1)),
+                count(*) FILTER (WHERE ip = $2)
+         FROM auth_attempts
+         WHERE kind = 'login_failed' AND attempted_at > now() - make_interval(mins => $3)
+           AND (email = lower($1) OR ip = $2)",
+    )
+    .bind(email)
+    .bind(ip)
+    .bind(FAILED_LOGIN_WINDOW_MINS)
+    .fetch_one(&state.db)
+    .await?;
+    if email_ip >= FAILED_LOGINS_PER_EMAIL_IP
+        || by_email >= FAILED_LOGINS_PER_EMAIL
+        || by_ip >= FAILED_LOGINS_PER_IP
+    {
+        return Err(ApiError::TooManyAttempts);
+    }
+    Ok(())
+}
+
 async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Result<Json<RegisterBody>, JsonRejection>,
 ) -> ApiResult<(StatusCode, Json<Tokens>)> {
+    if !state.allow_registration {
+        return Err(ApiError::RegistrationClosed);
+    }
     let Json(body) = body?;
+    let ip = client_ip(&headers);
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM auth_attempts
+         WHERE kind = 'register' AND ip = $1 AND attempted_at > now() - interval '1 hour'",
+    )
+    .bind(&ip)
+    .fetch_one(&state.db)
+    .await?;
+    if recent >= REGISTRATIONS_PER_IP_PER_HOUR {
+        return Err(ApiError::TooManyAttempts);
+    }
+    record_attempt(&state, "register", body.email.trim(), &ip).await?;
     let email = validate_email(&body.email)?;
     let name = validate_text(&body.name, "El nombre")?;
     let device = validate_text(&body.device_name, "El nombre del dispositivo")?;
@@ -295,10 +369,15 @@ async fn register(
 
 async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Result<Json<LoginBody>, JsonRejection>,
 ) -> ApiResult<Json<Tokens>> {
     let Json(body) = body?;
     let device = validate_text(&body.device_name, "El nombre del dispositivo")?;
+    let ip = client_ip(&headers);
+    let email_key = body.email.trim().to_owned();
+    // Before hashing, so a blocked attacker can't keep the CPU busy either.
+    check_login_attempts(&state, &email_key, &ip).await?;
     let row: Option<(Uuid, String, String, String)> = sqlx::query_as(
         "SELECT id, email, name, password_hash FROM users WHERE lower(email) = lower($1)",
     )
@@ -310,8 +389,17 @@ async fn login(
         .map_or_else(|| DUMMY_HASH.clone(), |r| r.3.clone());
     let ok = verify_password(body.password, hash).await?;
     let Some((id, email, name, _)) = row.filter(|_| ok) else {
+        // Counted whether or not the account exists, so blocking reveals nothing.
+        record_attempt(&state, "login_failed", &email_key, &ip).await?;
         return Err(ApiError::Unauthorized("invalid_credentials"));
     };
+    sqlx::query(
+        "DELETE FROM auth_attempts WHERE kind = 'login_failed' AND email = lower($1) AND ip = $2",
+    )
+    .bind(&email_key)
+    .bind(&ip)
+    .execute(&state.db)
+    .await?;
     let tokens = start_session(&state, &state.db, User { id, email, name }, &device).await?;
     Ok(Json(tokens))
 }

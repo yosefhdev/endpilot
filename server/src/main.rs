@@ -14,6 +14,8 @@ mod workspaces;
 pub struct AppState {
     pub db: PgPool,
     pub keys: Arc<auth::Keys>,
+    /// `ALLOW_REGISTRATION=false` closes sign-up once the team's accounts exist.
+    pub allow_registration: bool,
 }
 
 fn app(state: AppState) -> Router {
@@ -46,6 +48,7 @@ async fn main() {
     let state = AppState {
         db,
         keys: Arc::new(auth::Keys::new(secret.as_bytes())),
+        allow_registration: std::env::var("ALLOW_REGISTRATION").map_or(true, |v| v != "false"),
     };
 
     let addr = std::env::var("API_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());

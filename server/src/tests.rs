@@ -12,10 +12,41 @@ struct Api(Router);
 
 impl Api {
     fn new(db: PgPool) -> Self {
+        Self::with_registration(db, true)
+    }
+
+    fn with_registration(db: PgPool, allow_registration: bool) -> Self {
         Self(app(AppState {
             db,
             keys: Arc::new(auth::Keys::new(&[7; 32])),
+            allow_registration,
         }))
+    }
+
+    /// POST as if through Caddy from client address `ip`.
+    async fn post_from(&self, uri: &str, ip: &str, body: Value) -> (StatusCode, Value) {
+        let req = Request::post(uri)
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", ip)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let res = self.0.clone().oneshot(req).await.unwrap();
+        let status = res.status();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn login_from(&self, ip: &str, email: &str, password: &str) -> StatusCode {
+        self.post_from(
+            "/auth/login",
+            ip,
+            json!({ "email": email, "password": password, "deviceName": "X" }),
+        )
+        .await
+        .0
     }
 
     async fn call(
@@ -325,4 +356,102 @@ async fn workspace_crud_and_permissions(db: PgPool) {
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, list) = api.call(Method::GET, "/workspaces", Some(ana), None).await;
     assert_eq!(list.as_array().unwrap().len(), 1);
+}
+
+#[sqlx::test]
+async fn repeated_failed_logins_are_blocked(db: PgPool) {
+    let api = Api::new(db);
+    api.register("ana@example.com").await;
+    let attacker = "203.0.113.9";
+
+    for _ in 0..5 {
+        assert_eq!(
+            api.login_from(attacker, "ana@example.com", "mala-clave")
+                .await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    // Blocked now, even with the right password (case doesn't dodge it).
+    let (status, body) = api
+        .post_from(
+            "/auth/login",
+            attacker,
+            json!({ "email": "ANA@example.com", "password": "correcta-123", "deviceName": "X" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(body["error"]["code"], "too_many_attempts");
+
+    // The real owner, from elsewhere, still gets in; success clears their own count.
+    let owner = "198.51.100.7";
+    assert_eq!(
+        api.login_from(owner, "ana@example.com", "mala-clave").await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        api.login_from(owner, "ana@example.com", "correcta-123")
+            .await,
+        StatusCode::OK
+    );
+
+    // Emails that don't exist are limited the same way (no account enumeration).
+    for _ in 0..5 {
+        api.login_from(attacker, "nadie@example.com", "x").await;
+    }
+    assert_eq!(
+        api.login_from(attacker, "nadie@example.com", "x").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[sqlx::test]
+async fn one_email_from_many_addresses_is_capped(db: PgPool) {
+    let api = Api::new(db);
+    api.register("ana@example.com").await;
+    for i in 0..20 {
+        let ip = format!("10.0.0.{i}");
+        assert_eq!(
+            api.login_from(&ip, "ana@example.com", "mala-clave").await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        api.login_from("10.0.1.1", "ana@example.com", "correcta-123")
+            .await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[sqlx::test]
+async fn registration_can_be_closed_and_is_rate_limited(db: PgPool) {
+    let closed = Api::with_registration(db.clone(), false);
+    let (status, body) = closed
+        .post_from(
+            "/auth/register",
+            "1.2.3.4",
+            json!({ "email": "a@example.com", "name": "A", "password": "correcta-123", "deviceName": "X" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["code"], "registration_closed");
+
+    let open = Api::new(db);
+    for i in 0..10 {
+        let body = json!({ "email": format!("u{i}@example.com"), "name": "U", "password": "correcta-123", "deviceName": "X" });
+        assert_eq!(
+            open.post_from("/auth/register", "1.2.3.4", body).await.0,
+            StatusCode::CREATED
+        );
+    }
+    let body = json!({ "email": "u10@example.com", "name": "U", "password": "correcta-123", "deviceName": "X" });
+    assert_eq!(
+        open.post_from("/auth/register", "1.2.3.4", body.clone())
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        open.post_from("/auth/register", "5.6.7.8", body).await.0,
+        StatusCode::CREATED
+    );
 }

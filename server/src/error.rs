@@ -10,6 +10,8 @@ pub enum ApiError {
     BadRequest(&'static str, String),
     Unauthorized(&'static str),
     Forbidden,
+    RegistrationClosed,
+    TooManyAttempts,
     NotFound,
     Conflict(&'static str, String),
     Internal(String),
@@ -40,6 +42,17 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "forbidden",
                 "No tienes permiso para hacer esto.".into(),
+            ),
+            Self::RegistrationClosed => (
+                StatusCode::FORBIDDEN,
+                "registration_closed",
+                "Este servidor no admite registros nuevos. Pide una cuenta a quien lo administra."
+                    .into(),
+            ),
+            Self::TooManyAttempts => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_attempts",
+                "Demasiados intentos. Espera unos minutos y vuelve a probar.".into(),
             ),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found", "No existe.".into()),
             Self::Conflict(code, m) => (StatusCode::CONFLICT, code, m),
