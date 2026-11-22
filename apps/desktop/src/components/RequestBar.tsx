@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ImportResult } from "../types";
-import { Code2, Send, Square } from "lucide-react";
+import { ChevronDown, Code2, Send, Square } from "lucide-react";
 import { errorText, useActiveTab, useStore } from "../store";
 import { CodeDialog } from "./Dialogs";
 import { methodColor } from "../lib/styles";
@@ -25,18 +25,25 @@ export function RequestBar() {
         }}
       >
         <div className="flex min-w-0 flex-1 rounded-md border border-line-strong bg-surface focus-within:border-slate-500">
-          <select
-            value={tab.draft.method}
-            onChange={(e) => updateDraft(tab.id, { method: e.target.value })}
-            aria-label="Método HTTP"
-            className={`w-28 shrink-0 rounded-l-md border-r border-line-strong bg-transparent px-3 font-mono text-[13px] font-semibold focus:outline-none ${methodColor(tab.draft.method)}`}
-          >
-            {METHODS.map((m) => (
-              <option key={m} value={m} className={`bg-surface ${methodColor(m)}`}>
-                {m}
-              </option>
-            ))}
-          </select>
+          {/* Own chevron: the native one ignores padding and sits against the border. */}
+          <div className="relative w-28 shrink-0 border-r border-line-strong">
+            <select
+              value={tab.draft.method}
+              onChange={(e) => updateDraft(tab.id, { method: e.target.value })}
+              aria-label="Método HTTP"
+              className={`h-full w-full appearance-none rounded-l-md bg-transparent pr-8 pl-3 font-mono text-[13px] font-semibold focus:outline-none ${methodColor(tab.draft.method)}`}
+            >
+              {METHODS.map((m) => (
+                <option key={m} value={m} className={`bg-surface ${methodColor(m)}`}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              aria-hidden
+              className={`pointer-events-none absolute top-1/2 right-3 size-3.5 -translate-y-1/2 ${methodColor(tab.draft.method)}`}
+            />
+          </div>
           <VarInput
             value={tab.draft.url}
             onChange={(url) => setUrl(tab.id, url)}

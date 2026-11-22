@@ -50,6 +50,8 @@ impl Default for Account {
         Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
+                // A redirect could carry the password or tokens to another host.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("http client"),
             live: Mutex::new(None),
@@ -79,13 +81,32 @@ fn forget_saved() {
     }
 }
 
-/// `https://host/` → `https://host`. Only http(s) URLs.
+/// `https://host/` → `https://host`. HTTPS, except plain HTTP on this machine
+/// (passwords and tokens must not cross a network in clear text). API paths are
+/// appended to the result, so no query, fragment or `user@` part.
 fn normalize_url(url: &str) -> Result<String, String> {
     let url = url.trim().trim_end_matches('/');
-    let ok = reqwest::Url::parse(url)
-        .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some());
-    if !ok {
-        return Err("La URL del servidor debe empezar con http:// o https://".into());
+    let parsed = reqwest::Url::parse(url)
+        .ok()
+        .filter(|u| u.host().is_some() && matches!(u.scheme(), "http" | "https"))
+        .ok_or("La URL del servidor debe empezar con https://")?;
+    if parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err("La URL del servidor no puede llevar usuario, ? ni #.".into());
+    }
+    let loopback = parsed.host_str().is_some_and(|h| {
+        h == "localhost"
+            || h.trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    if parsed.scheme() == "http" && !loopback {
+        return Err(
+            "Usa https:// (http:// solo se permite para un servidor en este equipo).".into(),
+        );
     }
     Ok(url.to_owned())
 }
@@ -134,7 +155,8 @@ fn signed_in(server_url: String, tokens: &Value) -> Result<Live, String> {
     ) else {
         return Err("Respuesta inesperada del servidor.".into());
     };
-    let expires_in = tokens["expiresIn"].as_u64().unwrap_or(0);
+    // Bounded: the value comes from the server, and a huge one would overflow `Instant`.
+    let expires_in = tokens["expiresIn"].as_u64().unwrap_or(0).min(24 * 3600);
     let saved = Saved {
         server_url,
         refresh_token: refresh.to_owned(),
@@ -414,7 +436,16 @@ mod tests {
             normalize_url("http://localhost:8080").unwrap(),
             "http://localhost:8080"
         );
+        assert_eq!(
+            normalize_url("http://127.0.0.1:8080/").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(normalize_url("http://[::1]").unwrap(), "http://[::1]");
         assert!(normalize_url("ftp://x").is_err());
         assert!(normalize_url("example.com").is_err());
+        assert!(normalize_url("http://api.example.com").is_err());
+        assert!(normalize_url("https://u:p@api.example.com").is_err());
+        assert!(normalize_url("https://api.example.com/?x=1").is_err());
+        assert!(normalize_url("https://api.example.com/#a").is_err());
     }
 }
