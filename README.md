@@ -64,7 +64,7 @@ Errores: `{"error": {"code": "...", "message": "..."}}`. Las rutas con 🔒 pide
 
 El access token dura 15 min. El refresh token rota en cada uso; si se reutiliza uno viejo, la sesión se revoca.
 
-Protección: tras 5 logins fallidos en 15 minutos (mismo email y misma IP) el servidor responde `429 too_many_attempts`; también limita por email (20) y por IP (50), y los registros a 10 por IP por hora. Con `ALLOW_REGISTRATION=false` en `deploy/.env`, `POST /auth/register` responde `403 registration_closed`.
+Protección: tras 5 logins fallidos en 15 minutos (mismo email y misma IP) el servidor responde `429 too_many_attempts`; también limita por email (20) y por IP (50), y los registros a 10 por IP por hora. Un login correcto borra los fallos de esa cuenta. La API toma la IP del `X-Forwarded-For` solo si la conexión viene de una red privada (Caddy en Docker); no expongas el puerto de la API directamente a internet. Con `ALLOW_REGISTRATION=false` en `deploy/.env`, `POST /auth/register` responde `403 registration_closed`.
 
 ## Compatibilidad con Postman
 

@@ -30,7 +30,7 @@ impl Api {
             .header("x-forwarded-for", ip)
             .body(Body::from(body.to_string()))
             .unwrap();
-        let res = self.0.clone().oneshot(req).await.unwrap();
+        let res = self.0.clone().oneshot(with_peer(req)).await.unwrap();
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         (
@@ -67,7 +67,7 @@ impl Api {
             None => req.body(Body::empty()),
         }
         .unwrap();
-        let res = self.0.clone().oneshot(req).await.unwrap();
+        let res = self.0.clone().oneshot(with_peer(req)).await.unwrap();
         let status = res.status();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         (
@@ -98,6 +98,16 @@ impl Api {
         )
         .await
     }
+}
+
+/// What `into_make_service_with_connect_info` adds in production: a proxy on a private network.
+fn with_peer(mut req: Request<Body>) -> Request<Body> {
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [172, 18, 0, 5],
+            40000,
+        ))));
+    req
 }
 
 fn token(v: &Value) -> &str {
@@ -454,4 +464,38 @@ async fn registration_can_be_closed_and_is_rate_limited(db: PgPool) {
         open.post_from("/auth/register", "5.6.7.8", body).await.0,
         StatusCode::CREATED
     );
+}
+
+#[test]
+fn forwarded_address_is_only_trusted_from_a_private_proxy() {
+    use axum::http::HeaderMap;
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-for", "9.9.9.9, 203.0.113.4".parse().unwrap());
+    let proxy = std::net::SocketAddr::from(([172, 18, 0, 5], 1));
+    let public = std::net::SocketAddr::from(([198, 51, 100, 1], 1));
+    assert_eq!(auth::client_ip(proxy, &headers), "203.0.113.4");
+    assert_eq!(auth::client_ip(public, &headers), "198.51.100.1");
+    headers.insert("x-forwarded-for", "basura".parse().unwrap());
+    assert_eq!(auth::client_ip(proxy, &headers), "172.18.0.5");
+}
+
+#[sqlx::test]
+async fn concurrent_guesses_cannot_overshoot_the_limit(db: PgPool) {
+    let api = Api::new(db);
+    api.register("ana@example.com").await;
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..15 {
+        let api = Api(api.0.clone());
+        set.spawn(async move {
+            api.login_from("203.0.113.9", "ana@example.com", "mala-clave")
+                .await
+        });
+    }
+    let statuses = set.join_all().await;
+    let unauthorized = statuses
+        .iter()
+        .filter(|s| **s == StatusCode::UNAUTHORIZED)
+        .count();
+    // In-flight guesses count against each other, so a burst may get fewer than 5, never more.
+    assert!((1..=5).contains(&unauthorized), "{statuses:?}");
 }
