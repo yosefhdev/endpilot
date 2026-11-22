@@ -2,7 +2,7 @@
 
 Cliente de APIs de escritorio, autohospedado y colaborativo. Alternativa local-first a Postman, compatible con sus colecciones. Nombre provisional.
 
-Estado: **Fase 4 en curso** (la app funciona sola en local; el servidor ya tiene cuentas y workspaces, aún sin conexión desde la app). El plan completo está en [PLAN.md](PLAN.md).
+Estado: **Fase 4 en curso** (la app funciona sola en local; puede iniciar sesión en un servidor y ver tus workspaces, todavía sin sincronizar colecciones). El plan completo está en [PLAN.md](PLAN.md).
 
 ## Requisitos
 

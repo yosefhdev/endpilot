@@ -8,9 +8,7 @@ import { CodeEditor } from "./CodeEditor";
 import { KeyValueTable } from "./KeyValueTable";
 import { ScriptsEditor } from "./ScriptsEditor";
 import { Count, Modal, TabStrip } from "./ui";
-
-const textClass =
-  "h-8 w-full rounded border border-line-strong bg-bg px-2 text-[13px] focus:border-slate-500 focus:outline-none";
+import { textClass } from "../lib/styles";
 
 /** Edits a variable list (and optionally a name): environments, globals, collection variables. */
 export function VariablesDialog({

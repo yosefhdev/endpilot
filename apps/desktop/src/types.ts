@@ -233,6 +233,20 @@ export interface ScriptOutput {
   errors: string[];
 }
 
+/** Signed-in Endpilot server account (tokens stay in Rust and the OS keychain). */
+export interface Account {
+  serverUrl: string;
+  user: { id: string; email: string; name: string };
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  kind: "personal" | "team";
+  role: "owner" | "admin" | "editor" | "viewer";
+  createdAt: string;
+}
+
 /** What the scripts of one send left: shown in the response panel. */
 export interface ScriptReport {
   logs: LogLine[];

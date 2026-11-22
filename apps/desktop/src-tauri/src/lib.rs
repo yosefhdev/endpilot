@@ -1,3 +1,4 @@
+mod account;
 mod io_cmds;
 mod store_cmds;
 
@@ -63,6 +64,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Inflight::default())
+        .manage(account::Account::default())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -97,6 +99,11 @@ pub fn run() {
             io_cmds::import_file,
             io_cmds::export_collection,
             io_cmds::export_environment,
+            account::account_status,
+            account::account_login,
+            account::account_register,
+            account::account_logout,
+            account::list_workspaces,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

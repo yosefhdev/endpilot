@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Estado actual
 
-**Fase 3 completada** (requests con pestañas; colecciones, entornos, variables, auth e historial en SQLite local; importar/exportar Postman, importar OpenAPI y cURL, generar código; herencia de auth, ajustes de colección/carpeta y scripts pre/post con `pm.*`). **Fase 4 en curso:** la API ya tiene cuentas (registro, login, refresh rotativo, sesiones por dispositivo) y CRUD de workspaces sobre Postgres; falta el login en el cliente, OpenAPI, recuperación de contraseña, OAuth, 2FA y límite de intentos. `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
+**Fase 3 completada** (requests con pestañas; colecciones, entornos, variables, auth e historial en SQLite local; importar/exportar Postman, importar OpenAPI y cURL, generar código; herencia de auth, ajustes de colección/carpeta y scripts pre/post con `pm.*`). **Fase 4 en curso:** la API ya tiene cuentas (registro, login, refresh rotativo, sesiones por dispositivo) y CRUD de workspaces sobre Postgres; la app ya inicia sesión y lista los workspaces (sin sync todavía); falta OpenAPI, recuperación de contraseña, OAuth, 2FA y límite de intentos. `PLAN.md` es la fuente de verdad para alcance, stack, arquitectura y fases; léelo antes de proponer cambios de diseño y marca sus casillas al cerrar tareas. Nombre del producto provisional ("Endpilot").
 
 ## Comandos
 
@@ -70,6 +70,7 @@ Alternativa de escritorio a Postman, autohospedada, local-first, con sync en tie
 - SQL con `sqlx::query`/`query_as` en tiempo de ejecución, no las macros `query!` (no exigen base al compilar). sqlx 0.9 rechaza SQL armado con `format!`: usa literales (ver la macro `select!` en `workspaces.rs`).
 - Sesiones: JWT HS256 de 15 min (`sub` = usuario, `sid` = sesión) + refresh token aleatorio guardado como SHA-256 y rotado en cada uso. Cada request revisa que la sesión no esté revocada (cierre remoto inmediato). Reusar un refresh ya rotado revoca la sesión. El cliente debe refrescar de uno en uno.
 - Config: `DATABASE_URL`, `JWT_SECRET` (≥ 32 caracteres), `API_ADDR`. Tests: `#[sqlx::test]` crea una base nueva por test.
+- Cliente: `src-tauri/src/account.rs` habla con el servidor desde Rust (reqwest). URL del servidor, usuario y refresh token van en el keychain del sistema (`keyring`, una entrada `endpilot/session`); el access token solo en memoria. Un mutex serializa los refresh. La UI (`components/Account.tsx`, pie de la barra lateral) nunca ve tokens. Test contra el stack de dev: `cargo test -p endpilot-desktop -- --ignored` (usa la entrada `endpilot-test`).
 
 ### Sincronización (la parte delicada)
 

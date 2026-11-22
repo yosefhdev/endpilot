@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { errorText, useStore } from "../store";
 import { methodColor } from "../lib/styles";
 import type { Environment, HistoryEntry } from "../types";
+import { AccountBar } from "./Account";
 import { CollectionTree } from "./CollectionTree";
 import { confirmDelete } from "../lib/confirm";
 import { VariablesDialog } from "./Dialogs";
@@ -230,6 +231,7 @@ export function Sidebar({ width }: { width: number }) {
       </div>
       {panel === "environments" && <EnvironmentsPanel />}
       {panel === "history" && <HistoryPanel />}
+      <AccountBar />
     </aside>
   );
 }

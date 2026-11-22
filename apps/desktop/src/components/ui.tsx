@@ -73,6 +73,7 @@ export function Modal({
   children,
   wide = false,
   large = false,
+  busy = false,
 }: {
   title: string;
   onClose: () => void;
@@ -82,6 +83,8 @@ export function Modal({
   wide?: boolean;
   /** Big fixed-height dialog for editors with tabs. */
   large?: boolean;
+  /** Disables the submit button while the action runs. */
+  busy?: boolean;
 }) {
   return (
     <dialog
@@ -114,7 +117,8 @@ export function Modal({
           </button>
           <button
             type="submit"
-            className="h-8 rounded-md bg-accent px-3 text-[13px] font-semibold text-on-accent hover:bg-accent-hover"
+            disabled={busy}
+            className="h-8 rounded-md bg-accent px-3 text-[13px] font-semibold text-on-accent hover:bg-accent-hover disabled:cursor-wait disabled:opacity-50"
           >
             {submitLabel}
           </button>

@@ -215,7 +215,7 @@ docker compose -f deploy/docker-compose.yml up -d
 - [ ] Límite de intentos de login (fuerza bruta) y opción para cerrar el registro público.
 - [ ] Recuperación de contraseña y OAuth (Google/GitHub); 2FA opcional.
 - [x] Workspaces (crear, listar, renombrar, borrar).
-- [ ] Inicio de sesión en el cliente y descarga de los workspaces del usuario.
+- [x] Inicio de sesión en el cliente y descarga de los workspaces del usuario.
 - **Entregable:** iniciar sesión desde otra computadora y ver tus workspaces.
 
 ### Fase 5: Sincronización en tiempo real (3-4 semanas)

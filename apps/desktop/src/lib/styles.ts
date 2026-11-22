@@ -10,5 +10,9 @@ export const METHOD_COLORS: Record<string, string> = {
 
 export const methodColor = (m: string) => METHOD_COLORS[m.toUpperCase()] ?? "text-muted";
 
+/** Bordered input for forms in dialogs. */
+export const textClass =
+  "h-8 w-full rounded border border-line-strong bg-bg px-2 text-[13px] focus:border-slate-500 focus:outline-none";
+
 export const inputClass =
   "h-8 w-full rounded border border-transparent bg-transparent px-2 font-mono text-[13px] text-fg placeholder:text-slate-500 hover:border-line-strong focus:border-line-strong focus:bg-surface focus:outline-none";
